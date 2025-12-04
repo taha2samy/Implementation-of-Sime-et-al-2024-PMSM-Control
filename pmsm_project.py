@@ -128,24 +128,24 @@ def _(mo):
     # Note: no need for globals() or complexity, just defining them here is enough
     vault = {
         OPT_PID: mo.ui.dictionary({
-            "Kp": mo.ui.number(0.0, 500.0, 0.00001, 10.0, label=r"Proportional ($K_p$)", full_width=True),
-            "Ki": mo.ui.number(0.0, 500.0, 0.00001, 20.0, label=r"Integral ($K_i$)", full_width=True),
-            "Kd": mo.ui.number(0.0, 100.0, 0.00001, 0.0, label=r"Derivative ($K_d$)", full_width=True),
+            "Kp": mo.ui.number(0.0, 500.0, 0.0000001, 10.0, label=r"Proportional ($K_p$)", full_width=True),
+            "Ki": mo.ui.number(0.0, 500.0, 0.0000001, 20.0, label=r"Integral ($K_i$)", full_width=True),
+            "Kd": mo.ui.number(0.0, 100.0, 0.0000001, 0.0, label=r"Derivative ($K_d$)", full_width=True),
         }),
         OPT_FOPID: mo.ui.dictionary({
-            "Kp": mo.ui.number(0.0, 500.0, 0.00001, 5.0, label=r"Proportional ($K_p$)", full_width=True),
-            "Ki": mo.ui.number(0.0, 500.0, 0.00001, 10.0, label=r"Integral ($K_i$)", full_width=True),
-            "Kd": mo.ui.number(0.0, 100.0, 0.00001, 0.01, label=r"Derivative ($K_d$)", full_width=True),
-            "Lambda": mo.ui.number(0.01, 2.0, 0.001, 0.9, label=r"Int. Order ($\lambda$)", full_width=True),
-            "Mu": mo.ui.number(0.01, 2.0, 0.001, 0.8, label=r"Diff. Order ($\mu$)", full_width=True),
+            "Kp": mo.ui.number(0.0, 500.0, 0.0000001, 5.0, label=r"Proportional ($K_p$)", full_width=True),
+            "Ki": mo.ui.number(0.0, 500.0, 0.0000001, 10.0, label=r"Integral ($K_i$)", full_width=True),
+            "Kd": mo.ui.number(0.0, 100.0, 0.0000001, 0.01, label=r"Derivative ($K_d$)", full_width=True),
+            "Lambda": mo.ui.number(0.01, 2.0,0.0000001, 0.9, label=r"Int. Order ($\lambda$)", full_width=True),
+            "Mu": mo.ui.number(0.01, 2.0, 0.0000001, 0.8, label=r"Diff. Order ($\mu$)", full_width=True),
         }),
         OPT_GA: mo.ui.dictionary({
-            "Kp": mo.ui.number(0.0, 500.0, 0.00001, 5.0, label=r"Proportional ($K_p$)", full_width=True),
-            "Ki": mo.ui.number(0.0, 500.0, 0.00001, 10.0, label=r"Integral ($K_i$)", full_width=True),
-            "Kd": mo.ui.number(0.0, 100.0, 0.00001, 0.01, label=r"Derivative ($K_d$)", full_width=True),
-            "Lambda": mo.ui.number(0.01, 2.0, 0.001, 0.978, label=r"Int. Order ($\lambda$)", full_width=True),
-            "Mu": mo.ui.number(0.01, 2.0, 0.001, 0.862, label=r"Diff. Order ($\mu$)", full_width=True),
-            "Fuzzy_Scale": mo.ui.number(0.1, 10.0, 0.1, 1.0, label=r"Fuzzy Scale ($\alpha$)", full_width=True),
+            "Kp": mo.ui.number(0.0, 500.0, 0.0000001, 5.0, label=r"Proportional ($K_p$)", full_width=True),
+            "Ki": mo.ui.number(0.0, 500.0, 0.0000001, 10.0, label=r"Integral ($K_i$)", full_width=True),
+            "Kd": mo.ui.number(0.0, 100.0, 0.0000001, 0.01, label=r"Derivative ($K_d$)", full_width=True),
+            "Lambda": mo.ui.number(0.01, 2.0, 0.0000001, 0.978, label=r"Int. Order ($\lambda$)", full_width=True),
+            "Mu": mo.ui.number(0.01, 2.0, 0.0000001, 0.862, label=r"Diff. Order ($\mu$)", full_width=True),
+            "Fuzzy_Scale": mo.ui.number(0.1, 10.0, 0.0000001, 1.0, label=r"Fuzzy Scale ($\alpha$)", full_width=True),
         })
     }
     return OPT_FOPID, OPT_GA, OPT_PID, vault
@@ -1206,7 +1206,410 @@ def _(go, make_subplots, mo, np):
 
 
 @app.cell
-def _():
+def _(np, simulate_pmsm_system):
+    class GeneticOptimizerEngine:
+        """
+        Genetic Engine based STRICTLY on the Research Paper Methodology.
+        Target: Minimize Equation (36) -> ISE (Integral of Squared Error).
+        """
+        def __init__(self, motor_phys, vehicle_phys, sim_setup, custom_bounds=None):
+            self.motor_phys = motor_phys
+            self.vehicle_phys = vehicle_phys
+            self.sim_setup = sim_setup
+        
+            if custom_bounds:
+                self.bounds = custom_bounds
+            else:
+                # Default Bounds tailored around Table 2 values in the paper
+                # Paper Results: Kp=0.53, Ki=1.83, Kd=0.0005, Mu=0.86, Lam=0.97
+                self.bounds = [
+                    (0.1, 5.0),    # Kp
+                    (0.1, 5.0),    # Ki
+                    (0.0, 0.1),    # Kd (Usually very small)
+                    (0.1, 1.1),    # Lambda (Around 1.0)
+                    (0.1, 1.1),    # Mu (Around 1.0)
+                    (0.1, 5.0)     # FuzzyScale
+                ]
+
+        def _evaluate_fitness(self, genes):
+            # 1. Map Genes to Controller Parameters
+            ctrl_candidate = {
+                "Kp": genes[0], "Ki": genes[1], "Kd": genes[2],
+                "Lambda": genes[3], "Mu": genes[4], "Fuzzy_Scale": genes[5]
+            }
+        
+            # 2. Run Simulation
+            # Using 1.0s is sufficient to capture rise time and overshoot
+            # Paper mentions "Step Response", so we simulate a step input.
+            fast_scenario = self.sim_setup.copy()
+            fast_scenario["Time"] = 1.0  
+        
+            # Run simulation with "GA" strategy
+            time, speed, _, _, _, ref = simulate_pmsm_system(
+                ctrl_candidate, 
+                fast_scenario, 
+                self.motor_phys, 
+                self.vehicle_phys, 
+                strategy_type="GA"
+            )
+        
+            # 3. Calculate Fitness (Equation 36 in Paper)
+            # ISE = Integral( e(t)^2 ) dt
+        
+            error = ref - speed
+        
+            # Discrete Integration (Summation * dt)
+            dt = time[1] - time[0] # Time step
+            ise = np.sum(np.square(error)) * dt
+        
+            # Stability Check:
+            # If the system is unstable (Speed goes to infinity or NaN), punish heavily.
+            # This is implicit in any control paper.
+            if np.isnan(ise) or np.isinf(ise) or np.max(speed) > (ref * 2):
+                return 1e6 # High penalty for instability
+            
+            return ise
+
+        def run(self, pop_size=20, generations=10, mutation_rate=0.1):
+            """
+            Standard Genetic Algorithm Loop.
+            """
+            # A. Initialize Population
+            population = []
+            for _ in range(pop_size):
+                ind = [np.random.uniform(L, H) for L, H in self.bounds]
+                population.append(ind)
+        
+            best_sol = None
+            best_cost = float('inf')
+            history_log = []
+
+            for gen in range(generations):
+                scores = []
+                # 1. Evaluate Fitness for all individuals
+                for ind in population:
+                    score = self._evaluate_fitness(ind)
+                    scores.append(score)
+                
+                    if score < best_cost:
+                        best_cost = score
+                        best_sol = ind[:]
+            
+                history_log.append(f"Gen {gen+1}: ISE Cost = {best_cost:.5f}")
+
+                # 2. Create Next Generation
+                new_pop = []
+            
+                # Elitism: Carry over the single best individual (common practice)
+                best_idx = np.argmin(scores)
+                new_pop.append(population[best_idx])
+            
+                while len(new_pop) < pop_size:
+                    # Tournament Selection
+                    # Pick 2 random parents and select the better one
+                    candidates = np.random.randint(0, pop_size, size=2)
+                    p1_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
+                
+                    candidates = np.random.randint(0, pop_size, size=2)
+                    p2_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
+                
+                    parent1 = population[p1_idx]
+                    parent2 = population[p2_idx]
+                
+                    # Crossover (Arithmetic)
+                    child = []
+                    beta = np.random.random()
+                    for g1, g2 in zip(parent1, parent2):
+                        child.append(beta*g1 + (1-beta)*g2)
+                
+                    # Mutation
+                    for k in range(len(child)):
+                        if np.random.random() < mutation_rate:
+                            # Random reset within bounds (Standard Mutation)
+                            child[k] = np.random.uniform(self.bounds[k][0], self.bounds[k][1])
+                
+                    new_pop.append(child)
+            
+                population = new_pop
+
+            return best_sol, best_cost, history_log
+
+    return (GeneticOptimizerEngine,)
+
+
+@app.cell
+def _(mo):
+    mo.md("### 🧬 Evolutionary Optimization Console")
+
+    # 1. General Settings
+    ga_controls = mo.ui.dictionary({
+        "pop": mo.ui.number(5, 100, value=10, step=1, label="Population Size"),
+        "gen": mo.ui.number(1, 200, value=5, step=1, label="Generations"),
+        "mut": mo.ui.number(0.01, 0.5, value=0.1, step=0.01, label="Mutation Rate")
+    })
+
+    # 2. Search Space Bounds (The Fix is Here)
+    # We use mo.ui.array([...]) instead of list [...] to fix the ValueError
+    bounds_ui = mo.ui.dictionary({
+        "Kp":   mo.ui.array([mo.ui.number(0.1, 500, value=0.1, full_width=True), mo.ui.number(0.1, 500, value=50.0, full_width=True)]),
+        "Ki":   mo.ui.array([mo.ui.number(0.1, 500, value=0.1, full_width=True), mo.ui.number(0.1, 500, value=50.0, full_width=True)]),
+        "Kd":   mo.ui.array([mo.ui.number(0.0, 100, value=0.0, full_width=True), mo.ui.number(0.0, 100, value=1.0, full_width=True)]),
+        "Lam":  mo.ui.array([mo.ui.number(0.1, 2.0, value=0.1, full_width=True), mo.ui.number(0.1, 2.0, value=1.5, full_width=True)]),
+        "Mu":   mo.ui.array([mo.ui.number(0.1, 2.0, value=0.1, full_width=True), mo.ui.number(0.1, 2.0, value=1.5, full_width=True)]),
+        "Fuz":  mo.ui.array([mo.ui.number(0.1, 10.0, value=0.1, full_width=True), mo.ui.number(0.1, 10.0, value=5.0, full_width=True)]),
+    })
+
+    # 3. Custom Grid Layout for Bounds (Professional Look)
+    # Helper function to create a row
+    def bound_row(name, key):
+        return mo.hstack([
+            mo.md(f"**{name}**").style({"width": "120px", "align-self": "center"}), # Label
+            bounds_ui[key][0], # Min Input
+            mo.md("↔️").style({"padding": "0 10px", "align-self": "center"}),
+            bounds_ui[key][1]  # Max Input
+        ], align="center")
+
+    bounds_widget = mo.accordion({
+        "⚙️ Configure Search Bounds (حدود البحث)": mo.vstack([
+            # Header Row
+            mo.hstack([
+                mo.md("Param").style({"width": "120px", "font-weight": "bold", "color": "#666"}),
+                mo.md("Minimum Value").style({"flex": "1", "text-align": "center", "font-weight": "bold", "color": "#666"}),
+                mo.md("").style({"width": "30px"}),
+                mo.md("Maximum Value").style({"flex": "1", "text-align": "center", "font-weight": "bold", "color": "#666"}),
+            ]),
+            mo.md("---"),
+            # Input Rows
+            bound_row("Prop. Gain (Kp)", "Kp"),
+            bound_row("Integ. Gain (Ki)", "Ki"),
+            bound_row("Deriv. Gain (Kd)", "Kd"),
+            bound_row("Int. Order (λ)", "Lam"),
+            bound_row("Diff. Order (µ)", "Mu"),
+            bound_row("Fuzzy Scale (α)", "Fuz"),
+        ])
+    })
+
+    # 4. Action Button
+    run_ga_btn = mo.ui.button(label="🚀 Start Evolution Process", kind="success",value=1)
+    run_ga_btn.on_click = lambda value: True
+    # 5. Final Render
+    mo.vstack([
+        mo.callout(
+            mo.vstack([
+                mo.md("### 🛠️ Optimization Settings"),
+                mo.hstack([ga_controls], justify="center"), # Settings in one line
+                mo.md("---"),
+                bounds_widget,
+                mo.md(""), # Spacer
+                run_ga_btn
+            ]),
+            kind="neutral"
+        )
+    ])
+
+    return bounds_ui, ga_controls, run_ga_btn
+
+
+app._unparsable_cell(
+    r"""
+    class GeneticOptimizerEngine:
+        \"\"\"
+        Genetic Engine based STRICTLY on the Research Paper Methodology.
+        Target: Minimize Equation (36) -> ISE (Integral of Squared Error).
+        \"\"\"
+        def __init__(self, motor_phys, vehicle_phys, sim_setup, custom_bounds=None):
+            self.motor_phys = motor_phys
+            self.vehicle_phys = vehicle_phys
+            self.sim_setup = sim_setup
+        
+            if custom_bounds:
+                self.bounds = custom_bounds
+            else:
+                # Default Bounds tailored around Table 2 values in the paper
+                # Paper Results: Kp=0.53, Ki=1.83, Kd=0.0005, Mu=0.86, Lam=0.97
+                self.bounds = [
+                    (0.1, 5.0),    # Kp
+                    (0.1, 5.0),    # Ki
+                    (0.0, 0.1),    # Kd (Usually very small)
+                    (0.1, 1.1),    # Lambda (Around 1.0)
+                    (0.1, 1.1),    # Mu (Around 1.0)
+                    (0.1, 5.0)     # FuzzyScale
+                ]
+
+        def _evaluate_fitness(self, genes):
+            # 1. Map Genes to Controller Parameters
+            ctrl_candidate = {
+                \"Kp\": genes[0], \"Ki\": genes[1], \"Kd\": genes[2],
+                \"Lambda\": genes[3], \"Mu\": genes[4], \"Fuzzy_Scale\": genes[5]
+            }
+        
+            # 2. Run Simulation
+            # Using 1.0s is sufficient to capture rise time and overshoot
+            # Paper mentions \"Step Response\", so we simulate a step input.
+            fast_scenario = self.sim_setup.copy()
+            fast_scenario[\"Time\"] = 1.0  
+        
+            # Run simulation with \"GA\" strategy
+            time, speed, _, _, _, ref = simulate_pmsm_system(
+                ctrl_candidate, 
+                fast_scenario, 
+                self.motor_phys, 
+                self.vehicle_phys, 
+                strategy_type=\"GA\"
+            )
+        
+            # 3. Calculate Fitness (Equation 36 in Paper)
+            # ISE = Integral( e(t)^2 ) dt
+        
+            error = ref - speed
+        
+            # Discrete Integration (Summation * dt)
+            dt = time[1] - time[0] # Time step
+            ise = np.sum(np.square(error)) * dt
+        
+            # Stability Check:
+            # If the system is unstable (Speed goes to infinity or NaN), punish heavily.
+            # This is implicit in any control paper.
+            if np.isnan(ise) or np.isinf(ise) or np.max(speed) > (ref * 2):
+            
+
+        def run(self, pop_size=20, generations=10, mutation_rate=0.1):
+            \"\"\"
+            Standard Genetic Algorithm Loop.
+            \"\"\"
+            # A. Initialize Population
+            population = []
+            for _ in range(pop_size):
+                ind = [np.random.uniform(L, H) for L, H in self.bounds]
+                population.append(ind)
+        
+            best_sol = None
+            best_cost = float('inf')
+            history_log = []
+
+            for gen in range(generations):
+                scores = []
+                # 1. Evaluate Fitness for all individuals
+                for ind in population:
+                    score = self._evaluate_fitness(ind)
+                    scores.append(score)
+                
+                    if score < best_cost:
+                        best_cost = score
+                        best_sol = ind[:]
+            
+                history_log.append(f\"Gen {gen+1}: ISE Cost = {best_cost:.5f}\")
+
+                # 2. Create Next Generation
+                new_pop = []
+            
+                # Elitism: Carry over the single best individual (common practice)
+                best_idx = np.argmin(scores)
+                new_pop.append(population[best_idx])
+            
+                while len(new_pop) < pop_size:
+                    # Tournament Selection
+                    # Pick 2 random parents and select the better one
+                    candidates = np.random.randint(0, pop_size, size=2)
+                    p1_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
+                
+                    candidates = np.random.randint(0, pop_size, size=2)
+                    p2_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
+                
+                    parent1 = population[p1_idx]
+                    parent2 = population[p2_idx]
+                
+                    # Crossover (Arithmetic)
+                    child = []
+                    beta = np.random.random()
+                    for g1, g2 in zip(parent1, parent2):
+                        child.append(beta*g1 + (1-beta)*g2)
+                
+                    # Mutation
+                    for k in range(len(child)):
+                        if np.random.random() < mutation_rate:
+                            # Random reset within bounds (Standard Mutation)
+                            child[k] = np.random.uniform(self.bounds[k][0], self.bounds[k][1])
+                
+                    new_pop.append(child)
+            
+                population = new_pop
+    """,
+    name="_"
+)
+
+
+@app.cell
+def _(
+    GeneticOptimizerEngine,
+    bounds_ui,
+    ga_controls,
+    mo,
+    motor_ui,
+    run_ga_btn,
+    sim_settings,
+    vehicle_ui,
+):
+    result_view = mo.md("ℹ️ *System Ready. Adjust settings above and click Start.*")
+
+    if run_ga_btn.value:
+    
+        # A. Prepare the Bounds List from UI
+        # CORRECT WAY to read from mo.ui.array: use .value to get the list [min, max]
+        user_defined_bounds = [
+            tuple(bounds_ui["Kp"].value),
+            tuple(bounds_ui["Ki"].value),
+            tuple(bounds_ui["Kd"].value),
+            tuple(bounds_ui["Lam"].value),
+            tuple(bounds_ui["Mu"].value),
+            tuple(bounds_ui["Fuz"].value),
+        ]
+
+        # B. Initialize Engine with Custom Bounds
+        optimizer = GeneticOptimizerEngine(
+            motor_phys=motor_ui.value,
+            vehicle_phys=vehicle_ui.value,
+            sim_setup=sim_settings.value,
+            custom_bounds=user_defined_bounds
+        )
+
+        # C. Run Optimization
+        with mo.status.spinner(title="🧬 Evolving... Please wait"):
+            best_genes, final_cost, history = optimizer.run(
+                pop_size=int(ga_controls.value["pop"]),
+                generations=int(ga_controls.value["gen"]),
+                mutation_rate=ga_controls.value["mut"]
+            )
+
+        # D. Format Results
+        results_table = f"""
+        | **Parameter** | **Symbol** | **Optimized Value** | **Role** |
+        | :--- | :---: | :---: | :--- |
+        | Proportional Gain | $K_p$ | **{best_genes[0]:.5f}** | Error Correction Strength |
+        | Integral Gain | $K_i$ | **{best_genes[1]:.5f}** | Steady-State Error Elimination |
+        | Derivative Gain | $K_d$ | **{best_genes[2]:.5f}** | Damping & Prediction |
+        | **Integral Order** | $\lambda$ | **{best_genes[3]:.4f}** | Fractional Memory (History) |
+        | **Derivative Order** | $\mu$ | **{best_genes[4]:.4f}** | Fractional Smoothness |
+        | Fuzzy Scaling | $\\alpha$ | **{best_genes[5]:.4f}** | Adaptive Logic Gain |
+        """
+
+        log_text = "\n".join(history)
+
+        result_view = mo.vstack([
+            mo.md("---"),
+            mo.callout(
+                mo.md(f"**✅ Optimization Successful!**<br>Minimum Cost (Error): `{final_cost:.6f}`"),
+                kind="success"
+            ),
+            mo.md("### 🏆 Optimal Parameters Found"),
+            mo.md(results_table),
+            mo.accordion({
+                "📜 View Convergence History (Log)": mo.md(f"```text\n{log_text}\n```")
+            })
+        ])
+
+    result_view
+
     return
 
 
