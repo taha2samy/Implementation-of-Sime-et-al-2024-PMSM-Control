@@ -148,7 +148,6 @@ def _(mo):
             "Fuzzy_Scale": mo.ui.number(0.1, 10.0, 0.1, 1.0, label=r"Fuzzy Scale ($\alpha$)", full_width=True),
         })
     }
-
     return OPT_FOPID, OPT_GA, OPT_PID, vault
 
 
@@ -181,7 +180,7 @@ def _(np):
         def __init__(self):
             # 1. تعريف المصطلحات (NB: Negative Big ... PB: Positive Big)
             self.terms = ['NB', 'NS', 'Z', 'PS', 'PB']
-        
+
             # 2. مراكز المثلثات (Membership Functions Centers)
             self.centers = {
                 'NB': -1.0, 'NS': -0.5, 'Z': 0.0, 'PS': 0.5, 'PB': 1.0
@@ -197,7 +196,7 @@ def _(np):
                 ['S',  'S',  'M',  'B',  'B'], # PS
                 ['S',  'M',  'B',  'B',  'VB']  # PB
             ]
-        
+
             # 4. قيم الخرج (Output Singletons)
             # S=0.8 (هدّي اللعب), M=1.0 (عادي), B=1.5 (زود), VB=2.5 (زود جامد)
             self.outputs = {'S': 0.8, 'M': 1.0, 'B': 1.5, 'VB': 2.5}
@@ -231,7 +230,7 @@ def _(np):
 
                     # (Min Implication) ناخد القيمة الأقل
                     firing_strength = min(mu_e, mu_de)
-                
+
                     # نجيب النتيجة من الجدول
                     output_term = self.rule_matrix[i][j]
                     output_val = self.outputs[output_term]
@@ -243,9 +242,8 @@ def _(np):
             # ج. حساب المتوسط الموزون (Center of Gravity)
             if denominator == 0:
                 return 1.0
-        
-            return numerator / denominator
 
+            return numerator / denominator
 
 
     return (RealFuzzyController,)
@@ -265,7 +263,7 @@ def _(RealFuzzyController, go, mo, np):
 
     for idx, term in enumerate(fuzzy_viz.terms):
         y_values = [fuzzy_viz.triangle_mf(x, fuzzy_viz.centers[term]) for x in x_range]
-    
+
         fig_mf.add_trace(go.Scatter(
             x=x_range, y=y_values,
             name=f"Term: {term}",
@@ -359,10 +357,10 @@ def _(fuzzy_viz, go, mo):
         # ==========================================
         # PART 3: Rule Base Matrix Visualization (Heatmap)
         # ==========================================
-    
+
         # 1. Map text rules to numbers for coloring logic
         rule_map_val = {'VB': 4, 'B': 3, 'M': 2, 'S': 1}
-    
+
         rule_map_text = []
         rule_map_num = []
 
@@ -431,6 +429,106 @@ def _(fuzzy_viz, go, mo):
     return
 
 
+@app.class_definition
+class OustaloupFilter:
+    """
+    Implementation of Fractional Order calculus using Oustaloup's Recursive Approximation.
+    It approximates s^alpha as a cascade of 1st-order high/low pass filters.
+    """
+    def __init__(self, alpha, num_poles=3, freq_low=0.01, freq_high=1000.0, dt=0.0001):
+        """
+        alpha: The fractional order (e.g., 0.9 for integration, -0.9 for differentiation)
+               Note: usually inputs are positive for I/D terms, we handle sign internally.
+        """
+        self.alpha = alpha
+        self.dt = dt
+        self.active = (abs(alpha) > 1e-6) # لو الأس صفر، مبيعملش حاجة
+        
+        # مخازن لحفظ القيم السابقة (States) لكل فلتر فرعي
+        # إحنا هنكسر الفلتر الكبير لفلاتر صغيرة متتابعة (Cascade) عشان الاستقرار
+        self.filters_state_x = [] # مدخلات سابقة
+        self.filters_state_y = [] # مخرجات سابقة
+        self.coeffs = []          # معاملات الفلتر (b0, b1, a1)
+        
+        if self.active:
+            self._compute_coefficients(alpha, num_poles, freq_low, freq_high)
+            # تهيئة المخازن بالأصفار
+            self.filters_state_x = [0.0] * len(self.coeffs)
+            self.filters_state_y = [0.0] * len(self.coeffs)
+
+    def _compute_coefficients(self, alpha, N, wb, wh):
+        # 1. Oustaloup Math (حساب الأقطاب والأصفار في التردد Continuous)
+        mu = wh / wb
+        
+        # معادلات أوستالوب لحساب ترددات الأصفار (zk) والأقطاب (pk)
+        zeros = []
+        poles = []
+        
+        for k in range(-N, N + 1):
+            # حساب الـ omega للصفر والقطب
+            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - alpha))/(2*N + 1))
+            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + alpha))/(2*N + 1))
+            zeros.append(w_z)
+            poles.append(w_p)
+        
+        # حساب الـ Gain الكلي
+        self.gain = (wh)**alpha
+        
+        # 2. Discretization (Tustin Method) لكل زوج (s+z)/(s+p)
+        # بنحول كل جزء صغير لمعادلة: y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1]
+        # المعادلة في s-domain: H(s) = (s + w_z) / (s + w_p)
+        # بنعوض عن s بـ (2/dt * (1-z^-1)/(1+z^-1))
+        
+        for w_z, w_p in zip(zeros, poles):
+            # معاملات Tustin
+            k = (2.0 / self.dt)
+            
+            # Coefficients for (s + w_z) / (s + w_p)
+            # البسط (Numerator): k(1-z) + w_z(1+z) = (k+w_z) + (w_z-k)z^-1
+            # المقام (Denominator): k(1-z) + w_p(1+z) = (k+w_p) + (w_p-k)z^-1
+            
+            a0 = k + w_p
+            b0 = k + w_z
+            b1 = w_z - k
+            a1 = w_p - k
+            
+            # Normalizing by a0 to make equation: y[n] = ...
+            self.coeffs.append({
+                'b0': b0 / a0,
+                'b1': b1 / a0,
+                'a1': a1 / a0
+            })
+
+    def compute(self, input_val):
+        """
+        Processing function: Takes raw signal, returns fractionally filtered signal.
+        """
+        if not self.active:
+            return input_val
+        
+        # نبدأ بالإشارة مضروبة في الـ Gain الأساسي
+        current_signal = input_val * self.gain
+        
+        # نمرر الإشارة على سلسلة الفلاتر (Cascade)
+        for i, coeff in enumerate(self.coeffs):
+            # استرجاع القيم السابقة
+            x_prev = self.filters_state_x[i]
+            y_prev = self.filters_state_y[i]
+            
+            # معادلة الفلتر (Difference Equation)
+            # y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1]
+            output = (coeff['b0'] * current_signal) + (coeff['b1'] * x_prev) - (coeff['a1'] * y_prev)
+            
+            # تحديث الذاكرة
+            self.filters_state_x[i] = current_signal
+            self.filters_state_y[i] = output
+            
+            # الإشارة اللي خرجت من هنا، تدخل في الفلتر اللي بعده
+            current_signal = output
+            
+        return current_signal
+
+
 @app.cell
 def _(controller_selector, mo, vault):
     # 1. Retrieve values from the vault based on selection
@@ -483,7 +581,6 @@ def _(controller_selector, mo, vault):
             })
         ])
     )
-
     return active_params, motor_ui, sim_settings, vehicle_ui
 
 
@@ -493,7 +590,7 @@ def _(RealFuzzyController, np):
         """
         Returns: time, speed, torque, current, FUZZY_GAIN, ref
         """
-        # 1. Inputs
+        # 1. Inputs & Parameters
         t_end = scenario["Time"]
         w_target = scenario["Ref"]
         t_load = scenario["T_load"]
@@ -504,13 +601,22 @@ def _(RealFuzzyController, np):
 
         kp, ki, kd = ctrl_params["Kp"], ctrl_params["Ki"], ctrl_params["Kd"]
         lam = ctrl_params.get("Lambda", 1.0)
+        mu = ctrl_params.get("Mu", 1.0)
         alpha_scale = ctrl_params.get("Fuzzy_Scale", 1.0)
 
-        # === التغيير رقم 1: استدعاء العقل الذكي (Real Fuzzy) ===
-        # بنعمل نسخة منه هنا عشان نستخدمها تحت
+        # === 1. تجهيز العقل (Fuzzy) ===
         fuzzy_brain = RealFuzzyController()
 
-        # 2. Arrays
+        # === 2. تجهيز القلب (Fractional Filters) ===
+        use_fractional = ("Fractional" in strategy_type) or ("GA" in strategy_type)
+    
+        # فلتر التكامل (بياخد سالب lambda)
+        frac_integrator = OustaloupFilter(-lam) if use_fractional else None
+    
+        # فلتر التفاضل (بياخد mu موجبة)
+        frac_differentiator = OustaloupFilter(mu) if use_fractional else None
+
+        # 3. Initialization
         dt = 0.0001
         steps = int(t_end / dt)
         time = np.linspace(0, t_end, steps)
@@ -525,46 +631,54 @@ def _(RealFuzzyController, np):
         error_sum = 0.0
         prev_error = 0.0
 
-        # 3. Loop
+        # 4. Main Simulation Loop
         for i in range(steps):
             t = time[i]
             ref = w_target if t > 0.005 else 0.0
             error = ref - w_mech
-        
-            # === التغيير رقم 2: حساب التغير في الخطأ (مهم للـ Fuzzy) ===
             delta_error = error - prev_error
 
-            # --- Fuzzy Core (Real Logic) ---
+            # --- A. Fuzzy Logic Block ---
             gain_factor = 1.0
-        
-            # لو المود المختار هو GA أو Fuzzy، شغل الذكاء
             if "GA" in strategy_type or "Fuzzy" in strategy_type:
-                # هنا بنبعت الخطأ والتغير للعقل وهو يقرر (S, M, B, VB)
                 fuzzy_output = fuzzy_brain.compute_alpha(error, delta_error)
-            
-                # النتيجة بتضرب في الـ Scale اللي الـ GA اختاره
                 gain_factor = fuzzy_output * alpha_scale
 
-            gain_log[i] = gain_factor # نسجل القرار عشان نرسمه بعدين
+            gain_log[i] = gain_factor
 
-            # --- Control Logic ---
+            # --- B. Controller Block (PID vs FOPID) ---
+        
+            # 1. Proportional
             p_term = (kp * gain_factor) * error
-            i_weight = (ki * gain_factor)
-            if "PID" not in strategy_type: i_weight *= (1.0/lam)
-        
-            error_sum += error * dt
-            i_term = i_weight * error_sum
-        
-            # Derivative term uses delta_error directly
-            d_term = (kd * gain_factor) * (delta_error) / dt
 
+            # 2. Integral & Derivative
+            if use_fractional:
+                # === Real Fractional Calculus ===
+                i_signal = frac_integrator.compute(error)
+                d_signal = frac_differentiator.compute(error)
+            
+                i_term = (ki * gain_factor) * i_signal
+                d_term = (kd * gain_factor) * d_signal
+            else:
+                # === Standard Integer Calculus ===
+                error_sum += error * dt
+                i_term = (ki * gain_factor) * error_sum
+                d_term = (kd * gain_factor) * (delta_error / dt)
+
+            # تجميع الإشارة
             iq_ref = p_term + i_term + d_term
 
-            # Saturation (Limiter)
-            if iq_ref > 200: iq_ref = 200; error_sum -= error*dt
-            elif iq_ref < -200: iq_ref = -200; error_sum -= error*dt
+            # Saturation (Limiter) - FIXED HERE
+            if iq_ref > 200: 
+                iq_ref = 200
+                if not use_fractional: 
+                    error_sum -= error * dt
+            elif iq_ref < -200: 
+                iq_ref = -200
+                if not use_fractional: 
+                    error_sum -= error * dt
 
-            # --- Plant Model (Motor & Vehicle Physics) ---
+            # --- C. Plant Model (Physics) ---
             iq_current += (iq_ref - iq_current) * (dt/0.001)
             Te = 1.5 * P * Psi_m * iq_current
 
@@ -577,7 +691,6 @@ def _(RealFuzzyController, np):
             w_mech += dw_dt * dt
             if w_mech < 0: w_mech = 0
 
-            # Store Data
             speed_arr[i] = w_mech
             torque_arr[i] = Te
             iq_arr[i] = iq_current
@@ -687,7 +800,6 @@ def _(
         mo.md("## 🏎️ Vehicle Performance"),
         mo.ui.plotly(final_dashboard_fig)
     ])
-
     return fuzzy_data, ref_data, t_data, w_data
 
 
@@ -945,7 +1057,156 @@ def _(
 
     # 3. Render (This line displays the result on the screen)
     output_view
+    return
 
+
+@app.cell
+def _(go, make_subplots, mo, np):
+    test_order = 0.5 
+    filter_viz = OustaloupFilter(test_order, freq_low=0.01, freq_high=100.0)
+
+    # ------------------------------------------
+    # Part A: Frequency Response (Bode Plot)
+    # ------------------------------------------
+    freqs = np.logspace(-3, 3, 500)
+    magnitudes = []
+    phases = []
+
+    for w in freqs:
+        s = 1j * w
+        h_s = filter_viz.gain
+        wb = 0.01; wh = 100.0; N = 3
+        alpha = test_order
+        for k in range(-N, N + 1):
+            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - alpha))/(2*N + 1))
+            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + alpha))/(2*N + 1))
+            h_s *= (s + w_z) / (s + w_p)
+
+        magnitudes.append(20 * np.log10(np.abs(h_s)))
+        phases.append(np.angle(h_s, deg=True))
+
+    # ------------------------------------------
+    # Part B: Time Domain Response
+    # ------------------------------------------
+    time_sim = OustaloupFilter(test_order)
+    t_vec = np.linspace(0, 10, 1000)
+    input_step = np.ones_like(t_vec)
+    output_response = []
+    for val in input_step:
+        output_response.append(time_sim.compute(val))
+
+    # ------------------------------------------
+    # Plotting Configuration
+    # ------------------------------------------
+    c_mag = '#00d2ff'   # Cyan
+    c_phase = '#e74c3c' # RED (عشان يبان واضح زي ما طلبت)
+    c_resp = '#54a0ff'  # Blue
+    c_text = '#8899a6'  # Grey
+    c_grid = 'rgba(128, 128, 128, 0.2)' 
+
+    # === التعديل الجوهري هنا ===
+    # لازم نقوله specs=[[{"secondary_y": True}, {}]]
+    # عشان يفهم إن الرسمة الأولى فيها محورين Y
+    fig_filter = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=(
+            "<b style='color:#00d2ff'>Bode Plot (Frequency)</b>", 
+            "<b style='color:#54a0ff'>Step Response (Time)</b>"
+        ),
+        horizontal_spacing=0.15,
+        specs=[[{"secondary_y": True}, {}]] # <--- الحل السحري
+    )
+
+    # Plot 1: Magnitude (على المحور الأساسي)
+    fig_filter.add_trace(go.Scatter(
+        x=freqs, y=magnitudes,
+        name="Magnitude (dB)",
+        line=dict(color=c_mag, width=2.5),
+        legendgroup="group1"
+    ), row=1, col=1, secondary_y=False)
+
+    # Plot 1: Phase (على المحور الثانوي - الخط الأحمر)
+    fig_filter.add_trace(go.Scatter(
+        x=freqs, y=phases,
+        name="Phase (Deg)",
+        line=dict(color=c_phase, width=2.5),
+        legendgroup="group1"
+    ), row=1, col=1, secondary_y=True) # <--- ظهرناه هنا
+
+    # Plot 2: Time Response
+    fig_filter.add_trace(go.Scatter(
+        x=t_vec, y=output_response,
+        name=f"s<sup>{test_order}</sup> Response",
+        line=dict(color=c_resp, width=2.5)
+    ), row=1, col=2)
+
+    # Input Step
+    fig_filter.add_trace(go.Scatter(
+        x=t_vec, y=input_step,
+        name="Input Step",
+        line=dict(color=c_text, dash='dash', width=1.5),
+        opacity=0.5
+    ), row=1, col=2)
+
+    # ------------------------------------------
+    # Styling
+    # ------------------------------------------
+    base_axis_style = dict(
+        showgrid=True, gridcolor=c_grid, zerolinecolor=c_grid, tickfont=dict(color=c_text)
+    )
+
+    fig_filter.update_layout(
+        title=dict(
+            text=f"<b>Fractional Filter Analysis (Oustaloup Method)</b><br><span style='font-size:12px; color:{c_text};'>Verifying that s<sup>{test_order}</sup> behaves like a half-derivative</span>",
+            y=0.92, x=0.05
+        ),
+        height=450,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color=c_text),
+        hovermode="x unified",
+        margin=dict(t=100, l=80, r=80, b=50),
+        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center", bgcolor='rgba(0,0,0,0)'),
+    
+        # Axis 1 (Magnitude)
+        xaxis=dict(type="log", title="Frequency (rad/s)", title_font=dict(color=c_text), **base_axis_style),
+        yaxis=dict(title="Magnitude (dB)", title_font=dict(color=c_mag), **base_axis_style),
+    
+        # Axis 2 (Phase - The Red Line)
+        yaxis2=dict(
+            title="Phase (Deg)",
+            title_font=dict(color=c_phase),
+            range=[0, 90],
+            showgrid=False,
+            tickfont=dict(color=c_phase)
+        ),
+    
+        # Axis 3 & 4 (Time Plot)
+        xaxis2=dict(title="Time (s)", title_font=dict(color=c_text), **base_axis_style),
+        yaxis3=dict(title="Amplitude", title_font=dict(color=c_text), **base_axis_style)
+    )
+
+    # Target Line
+    theoretical_phase = test_order * 90
+    fig_filter.add_hline(
+        y=theoretical_phase, line_dash="dot", line_color=c_phase, 
+        annotation_text=f"Target: {theoretical_phase}°", annotation_font=dict(color=c_phase),
+        row=1, col=1, secondary_y=True
+    )
+
+    mo.vstack([
+        mo.md("## 📉 The Math Behind FOPID (Oustaloup Check)"),
+        mo.md(f"""
+        Checking the mathematical validity of the fractional operator **s<sup>{test_order}</sup>**:
+        """),
+        mo.ui.plotly(fig_filter)
+    ])
+
+    return
+
+
+@app.cell
+def _():
     return
 
 
