@@ -1,0 +1,16 @@
+# Start from a pre-built, optimized Python dev container image provided by Microsoft
+# This image includes a non-root user 'vscode' for better security
+FROM mcr.microsoft.com/devcontainers/python:3.11
+
+# Set the working directory inside the container.
+# The project files from your local machine will be mounted here.
+WORKDIR /workspaces/${localWorkspaceFolderBasename}
+
+# Copy the requirements file into the container
+# This is done as a separate step to leverage Docker's layer caching.
+# The container will only reinstall dependencies if this file changes.
+COPY requirements.txt .
+
+# The actual installation of dependencies into the venv and the venv creation
+# will be handled by the 'postCreateCommand' in devcontainer.json.
+# This ensures that VS Code is fully attached before the environment is finalized.

@@ -1,0 +1,78 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "⚙️ 1. Setup: Create Virtual Environment",
+            "type": "shell",
+            "command": "python3 -m venv .venv",
+            "detail": "Creates a dedicated Python environment for this project.",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "clear": true
+            },
+            "problemMatcher": [],
+            "options": {
+                "icon": {
+                    "id": "tools"
+                }
+            }
+        },
+        {
+            "label": "📦 2. Install: Project Dependencies",
+            "type": "shell",
+            "command": "./.venv/bin/pip install -r requirements.txt",
+            "detail": "Installs packages from requirements.txt into the .venv environment.",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": [],
+            "options": {
+                "icon": {
+                    "id": "package"
+                }
+            },
+            "group": "build"
+        },
+        {
+            "label": "🚀 3. Run: Marimo App (App Mode)",
+            "type": "shell",
+            "command": "./.venv/bin/marimo run pmsm_project.py",
+            "detail": "Runs the Marimo app in read-only application mode.",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "problemMatcher": [],
+            "options": {
+                "icon": {
+                    "id": "rocket"
+                }
+            }
+        },
+        {
+            "label": "📝 4. Edit: Marimo App (Edit Mode)",
+            "type": "shell",
+            "command": "./.venv/bin/marimo edit pmsm_project.py",
+            "detail": "Opens the Marimo app in interactive edit mode.",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "problemMatcher": [],
+            "options": {
+                "icon": {
+                    "id": "notebook"
+                }
+            }
+        }
+    ]
+}

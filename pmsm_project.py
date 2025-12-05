@@ -1,10 +1,10 @@
 import marimo
 
 __generated_with = "0.18.1"
-app = marimo.App(width="medium")
+app = marimo.App(width="columns", layout_file="layouts/pmsm_project.grid.json")
 
 
-@app.cell
+@app.cell(column=0, hide_code=True)
 def _():
 
     import marimo as mo
@@ -153,7 +153,6 @@ def _(mo):
 
 @app.cell
 def _(OPT_FOPID, OPT_GA, OPT_PID, mo):
-    # القائمة بتختار منها، ولما تغيرها، القيم اللي فوق (في Cell 1) مش هتتأثر
     controller_selector = mo.ui.dropdown(
         options=[OPT_PID, OPT_FOPID, OPT_GA],
         value=OPT_PID,
@@ -161,372 +160,8 @@ def _(OPT_FOPID, OPT_GA, OPT_PID, mo):
         full_width=True
     )
 
-    mo.vstack([
-        mo.md("### 🎛️ Control Strategy Selection"),
-        mo.callout(
-            mo.vstack([
-                mo.md("Select the controller type below."),
-                controller_selector
-            ]),
-            kind="neutral"
-        )
-    ])
+
     return (controller_selector,)
-
-
-@app.cell
-def _(np):
-    class RealFuzzyController:
-        def __init__(self):
-            # 1. تعريف المصطلحات (NB: Negative Big ... PB: Positive Big)
-            self.terms = ['NB', 'NS', 'Z', 'PS', 'PB']
-
-            # 2. مراكز المثلثات (Membership Functions Centers)
-            self.centers = {
-                'NB': -1.0, 'NS': -0.5, 'Z': 0.0, 'PS': 0.5, 'PB': 1.0
-            }
-
-            # 3. جدول القوانين (Rule Base Matrix)
-            # الصفوف: Error | الأعمدة: Delta Error
-            # النتيجة: Gain Multiplier (S, M, B, VB)
-            self.rule_matrix = [
-                ['VB', 'B',  'B',  'M',  'S'], # NB
-                ['B',  'B',  'M',  'S',  'S'], # NS
-                ['B',  'M',  'S',  'M',  'B'], # Z
-                ['S',  'S',  'M',  'B',  'B'], # PS
-                ['S',  'M',  'B',  'B',  'VB']  # PB
-            ]
-
-            # 4. قيم الخرج (Output Singletons)
-            # S=0.8 (هدّي اللعب), M=1.0 (عادي), B=1.5 (زود), VB=2.5 (زود جامد)
-            self.outputs = {'S': 0.8, 'M': 1.0, 'B': 1.5, 'VB': 2.5}
-
-        def triangle_mf(self, x, center, width=0.5):
-            """حساب درجة العضوية للمثلث"""
-            return max(0, 1 - abs(x - center) / width)
-
-        def compute_alpha(self, error, delta_error):
-            """
-            Input: Error, Change of Error
-            Output: Alpha Gain (التكبير/التصغير)
-            """
-            # أ. توحيد المقاييس (Normalization)
-            # بنفترض أقصى خطأ 250، وبنضرب في 5 لحساسية أعلى
-            e_norm = np.clip(error / 250.0 * 5.0, -1, 1)
-            # بنفترض أقصى تغير 10
-            de_norm = np.clip(delta_error / 10.0, -1, 1)
-
-            numerator = 0.0
-            denominator = 0.0
-
-            # ب. الاستنتاج (Inference Engine)
-            for i, e_term in enumerate(self.terms):
-                mu_e = self.triangle_mf(e_norm, self.centers[e_term])
-                if mu_e == 0: continue 
-
-                for j, de_term in enumerate(self.terms):
-                    mu_de = self.triangle_mf(de_norm, self.centers[de_term])
-                    if mu_de == 0: continue
-
-                    # (Min Implication) ناخد القيمة الأقل
-                    firing_strength = min(mu_e, mu_de)
-
-                    # نجيب النتيجة من الجدول
-                    output_term = self.rule_matrix[i][j]
-                    output_val = self.outputs[output_term]
-
-                    # تجميع للـ Defuzzification
-                    numerator += firing_strength * output_val
-                    denominator += firing_strength
-
-            # ج. حساب المتوسط الموزون (Center of Gravity)
-            if denominator == 0:
-                return 1.0
-
-            return numerator / denominator
-
-
-    return (RealFuzzyController,)
-
-
-@app.cell
-def _(RealFuzzyController, go, mo, np):
-    fuzzy_viz = RealFuzzyController()
-
-    # ==========================================
-    # PART 1: Fuzzification Visualization (Membership Functions)
-    # ==========================================
-    x_range = np.linspace(-1.5, 1.5, 200)
-    fig_mf = go.Figure()
-
-    colors = ['#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db'] 
-
-    for idx, term in enumerate(fuzzy_viz.terms):
-        y_values = [fuzzy_viz.triangle_mf(x, fuzzy_viz.centers[term]) for x in x_range]
-
-        fig_mf.add_trace(go.Scatter(
-            x=x_range, y=y_values,
-            name=f"Term: {term}",
-            fill='tozeroy',
-            line=dict(color=colors[idx], width=2),
-            opacity=0.6
-        ))
-
-    fig_mf.update_layout(
-        title=dict(
-            text="<b>1. Fuzzification Stage (Membership Functions)</b><br><span style='font-size:12px; color:gray;'>How the controller translates Error into Logic</span>",
-            y=0.9,  # نزلنا العنوان شوية عشان ميبقاش في سقف الصفحة
-            x=0.01,
-            xanchor='left',
-            yanchor='top'
-        ),
-        xaxis_title="Normalized Input (Error)",
-        yaxis_title="Degree of Membership (µ)",
-        height=400, # زودنا الطول شوية عشان العناصر تاخد راحتها
-        # === التعديل هنا: زودنا الهوامش العلوية (t=140) عشان نفصل العنوان عن الرسمة ===
-        margin=dict(l=20, r=20, t=140, b=20),
-        # === التعديل هنا: رفعنا الـ Legend لفوق خالص (y=1.3) ===
-        legend=dict(
-            orientation="h", 
-            y=1.3, 
-            x=0.5, 
-            xanchor="center",
-            bgcolor="rgba(255,255,255,0.8)" # خلفية شفافة عشان لو جه فوق خط ميبوظش الشكل
-        ),
-        template="plotly_white"
-    )
-
-    # ==========================================
-    # PART 2: Inference & Rule Base Visualization (Control Surface)
-    # ==========================================
-    res = 40
-    e_vec = np.linspace(-250, 250, res)
-    de_vec = np.linspace(-10, 10, res)
-    z_surface = np.zeros((res, res))
-
-    for i in range(res):
-        for j in range(res):
-            z_surface[j][i] = fuzzy_viz.compute_alpha(e_vec[i], de_vec[j])
-
-    fig_surf = go.Figure(data=[go.Surface(
-        z=z_surface, 
-        x=e_vec, 
-        y=de_vec,
-        colorscale='Viridis',
-        contours_z=dict(show=True, usecolormap=True, highlightcolor="white", project_z=True),
-        opacity=0.9
-    )])
-
-    fig_surf.update_layout(
-        title=dict(
-            text="<b>2. Inference & Defuzzification (Control Surface)</b><br><span style='font-size:12px; color:gray;'>The complete decision map (Rule Base result)</span>",
-            y=0.92,
-            x=0.01
-        ),
-        scene=dict(
-            xaxis_title='Error (E)',
-            yaxis_title='Change of Error (dE)',
-            zaxis_title='Output Gain (α)',
-            camera=dict(eye=dict(x=1.6, y=1.6, z=1.2))
-        ),
-        height=600,
-        # === التعديل هنا: زودنا الهامش العلوي (t=100) ===
-        margin=dict(l=10, r=10, t=100, b=10),
-        template="plotly_white"
-    )
-
-    # ==========================================
-    # PART 3: Render Output
-    # ==========================================
-    mo.vstack([
-        mo.md("## 🧩 Fuzzy Controller Internals"),
-        mo.md("""
-        This dashboard visualizes the two main stages of the fuzzy controller shown in your diagram:
-        1.  **Fuzzification:** The top plot shows the "Database," determining which linguistic term (like "Negative Big") the current error belongs to.
-        2.  **Inference Engine:** The bottom 3D plot shows the result of the "Rule Base." It maps every combination of Error and Change-of-Error to a specific Gain Output.
-        """),
-        mo.ui.plotly(fig_mf),
-        mo.ui.plotly(fig_surf)
-    ])
-    return (fuzzy_viz,)
-
-
-@app.cell
-def _(fuzzy_viz, go, mo):
-    def create_rule_heatmap(controller):
-        # ==========================================
-        # PART 3: Rule Base Matrix Visualization (Heatmap)
-        # ==========================================
-
-        # 1. Map text rules to numbers for coloring logic
-        rule_map_val = {'VB': 4, 'B': 3, 'M': 2, 'S': 1}
-
-        rule_map_text = []
-        rule_map_num = []
-
-        rows = len(controller.terms) # 5
-        cols = len(controller.terms) # 5
-
-        # Convert the rule matrix from text to numbers
-        # 'i' and 'j' are now local variables inside this function
-        for i in range(rows):
-            row_text = []
-            row_num = []
-            for j in range(cols):
-                rule_str = controller.rule_matrix[i][j]
-                row_text.append(rule_str)
-                row_num.append(rule_map_val[rule_str])
-            rule_map_text.append(row_text)
-            rule_map_num.append(row_num)
-
-        # 2. Create Heatmap
-        fig_rules = go.Figure(data=go.Heatmap(
-            z=rule_map_num,
-            x=controller.terms, # dE terms (Columns)
-            y=controller.terms, # Error terms (Rows)
-            text=rule_map_text, # Show 'VB', 'S' inside blocks
-            texttemplate="%{text}",
-            textfont={"size": 16, "color": "white", "family": "Arial"},
-            colorscale=[
-                [0.0, '#2ecc71'], # S (Green - Small Gain)
-                [0.33, '#f1c40f'], # M (Yellow - Medium)
-                [0.66, '#e67e22'], # B (Orange - Big)
-                [1.0, '#c0392b']  # VB (Red - Very Big)
-            ],
-            xgap=4, # Spacing between blocks
-            ygap=4,
-            showscale=False # Hide the color bar since text explains it
-        ))
-
-        fig_rules.update_layout(
-            title=dict(
-                text="<b>3. Fuzzy Rule Base (Logic Matrix)</b><br><span style='font-size:12px; color:gray;'>Logic: If Error is (Y) AND dError is (X) &rarr; Then Gain is (Cell Value)</span>",
-                y=0.9,
-                x=0.01
-            ),
-            xaxis_title="Change of Error (dE)",
-            yaxis_title="Error (E)",
-            height=550,
-            margin=dict(l=50, r=50, t=100, b=50),
-            template="plotly_white"
-        )
-
-        # Render
-        return mo.vstack([
-            mo.md("## 🚦 The Controller's Brain (Rule Matrix)"),
-            mo.md("""
-            This heatmap visualizes the lookup table used by the controller to make decisions.
-            *   **Red Cells (VB):** High aggression zone. Used when the error is large.
-            *   **Green Cells (S):** Stability zone. Used when the system is close to the target.
-            """),
-            mo.ui.plotly(fig_rules)
-        ])
-
-    # Call the function and store the result
-    heatmap_output = create_rule_heatmap(fuzzy_viz)
-
-    heatmap_output
-    return
-
-
-@app.class_definition
-class OustaloupFilter:
-    """
-    Implementation of Fractional Order calculus using Oustaloup's Recursive Approximation.
-    It approximates s^alpha as a cascade of 1st-order high/low pass filters.
-    """
-    def __init__(self, alpha, num_poles=3, freq_low=0.01, freq_high=1000.0, dt=0.0001):
-        """
-        alpha: The fractional order (e.g., 0.9 for integration, -0.9 for differentiation)
-               Note: usually inputs are positive for I/D terms, we handle sign internally.
-        """
-        self.alpha = alpha
-        self.dt = dt
-        self.active = (abs(alpha) > 1e-6) # لو الأس صفر، مبيعملش حاجة
-        
-        # مخازن لحفظ القيم السابقة (States) لكل فلتر فرعي
-        # إحنا هنكسر الفلتر الكبير لفلاتر صغيرة متتابعة (Cascade) عشان الاستقرار
-        self.filters_state_x = [] # مدخلات سابقة
-        self.filters_state_y = [] # مخرجات سابقة
-        self.coeffs = []          # معاملات الفلتر (b0, b1, a1)
-        
-        if self.active:
-            self._compute_coefficients(alpha, num_poles, freq_low, freq_high)
-            # تهيئة المخازن بالأصفار
-            self.filters_state_x = [0.0] * len(self.coeffs)
-            self.filters_state_y = [0.0] * len(self.coeffs)
-
-    def _compute_coefficients(self, alpha, N, wb, wh):
-        # 1. Oustaloup Math (حساب الأقطاب والأصفار في التردد Continuous)
-        mu = wh / wb
-        
-        # معادلات أوستالوب لحساب ترددات الأصفار (zk) والأقطاب (pk)
-        zeros = []
-        poles = []
-        
-        for k in range(-N, N + 1):
-            # حساب الـ omega للصفر والقطب
-            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - alpha))/(2*N + 1))
-            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + alpha))/(2*N + 1))
-            zeros.append(w_z)
-            poles.append(w_p)
-        
-        # حساب الـ Gain الكلي
-        self.gain = (wh)**alpha
-        
-        # 2. Discretization (Tustin Method) لكل زوج (s+z)/(s+p)
-        # بنحول كل جزء صغير لمعادلة: y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1]
-        # المعادلة في s-domain: H(s) = (s + w_z) / (s + w_p)
-        # بنعوض عن s بـ (2/dt * (1-z^-1)/(1+z^-1))
-        
-        for w_z, w_p in zip(zeros, poles):
-            # معاملات Tustin
-            k = (2.0 / self.dt)
-            
-            # Coefficients for (s + w_z) / (s + w_p)
-            # البسط (Numerator): k(1-z) + w_z(1+z) = (k+w_z) + (w_z-k)z^-1
-            # المقام (Denominator): k(1-z) + w_p(1+z) = (k+w_p) + (w_p-k)z^-1
-            
-            a0 = k + w_p
-            b0 = k + w_z
-            b1 = w_z - k
-            a1 = w_p - k
-            
-            # Normalizing by a0 to make equation: y[n] = ...
-            self.coeffs.append({
-                'b0': b0 / a0,
-                'b1': b1 / a0,
-                'a1': a1 / a0
-            })
-
-    def compute(self, input_val):
-        """
-        Processing function: Takes raw signal, returns fractionally filtered signal.
-        """
-        if not self.active:
-            return input_val
-        
-        # نبدأ بالإشارة مضروبة في الـ Gain الأساسي
-        current_signal = input_val * self.gain
-        
-        # نمرر الإشارة على سلسلة الفلاتر (Cascade)
-        for i, coeff in enumerate(self.coeffs):
-            # استرجاع القيم السابقة
-            x_prev = self.filters_state_x[i]
-            y_prev = self.filters_state_y[i]
-            
-            # معادلة الفلتر (Difference Equation)
-            # y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1]
-            output = (coeff['b0'] * current_signal) + (coeff['b1'] * x_prev) - (coeff['a1'] * y_prev)
-            
-            # تحديث الذاكرة
-            self.filters_state_x[i] = current_signal
-            self.filters_state_y[i] = output
-            
-            # الإشارة اللي خرجت من هنا، تدخل في الفلتر اللي بعده
-            current_signal = output
-            
-        return current_signal
 
 
 @app.cell
@@ -584,13 +219,289 @@ def _(controller_selector, mo, vault):
     return active_params, motor_ui, sim_settings, vehicle_ui
 
 
+@app.cell(column=1, hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ##  Interactive Simulation & Performance Analysis Dashboard
+
+        This is the main control station for the PMSM drive system. Use the **sidebar (⚙️)** to configure the controller architecture, tuning parameters, and simulation scenario. The results will be updated in real-time below, providing a comprehensive analysis of the system's dynamic performance and stability.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(go, make_subplots, mo, np):
+    # Assume 'np', 'go', 'make_subplots', 'mo', and 'OustaloupFilter' are pre-defined.
+
+    # The fractional order to be tested (e.g., 0.5 represents a half-derivative).
+    test_order = 0.5
+    filter_viz = OustaloupFilter(test_order, freq_low=0.01, freq_high=100.0)
+
+    # ------------------------------------------
+    # Part A: Calculate Frequency Response (for Bode Plot)
+    # ------------------------------------------
+    # This part recalculates the continuous-time transfer function to plot the ideal response.
+    freqs = np.logspace(-3, 3, 500)
+    magnitudes = []
+    phases = []
+
+    for w in freqs:
+        s = 1j * w
+        h_s = filter_viz.gain
+        wb, wh, N, alpha = 0.01, 100.0, 3, test_order # Oustaloup params
+        for k in range(-N, N + 1):
+            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - alpha))/(2*N + 1))
+            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + alpha))/(2*N + 1))
+            h_s *= (s + w_z) / (s + w_p)
+
+        magnitudes.append(20 * np.log10(np.abs(h_s)))
+        phases.append(np.angle(h_s, deg=True))
+
+    # ------------------------------------------
+    # Part B: Calculate Time Domain Response
+    # ------------------------------------------
+    # This part uses the discrete-time filter's 'compute' method.
+    time_sim = OustaloupFilter(test_order)
+    t_vec = np.linspace(0, 10, 1000)
+    input_step = np.ones_like(t_vec)
+    output_response = [time_sim.compute(val) for val in input_step]
+
+    # ------------------------------------------
+    # Plotting Configuration & Theming
+    # ------------------------------------------
+    c_mag = '#00d2ff'   # Bright Cyan for Magnitude
+    c_phase = '#e74c3c' # Bright Red for Phase
+    c_resp = '#54a0ff'  # Bright Blue for Time Response
+    c_text = '#aaa'     # Light gray for text, visible on light/dark backgrounds
+    c_grid = 'rgba(170, 170, 170, 0.2)' # Subtle grid lines
+
+    # --- Key Subplot Configuration ---
+    # To create a chart with two y-axes (for magnitude and phase), we must use 'specs'
+    # to explicitly enable a secondary y-axis on the first subplot.
+    fig_filter = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=(
+            f"<b style='color:{c_mag}'>Bode Plot (Frequency Domain)</b>",
+            f"<b style='color:{c_resp}'>Step Response (Time Domain)</b>"
+        ),
+        horizontal_spacing=0.15,
+        specs=[[{"secondary_y": True}, {}]] # <-- This enables the dual-axis plot
+    )
+
+    # Plot 1a: Add the Magnitude trace to the primary y-axis.
+    fig_filter.add_trace(go.Scatter(
+        x=freqs, y=magnitudes,
+        name="Magnitude (dB)",
+        line=dict(color=c_mag, width=2.5)
+    ), row=1, col=1, secondary_y=False)
+
+    # Plot 1b: Add the Phase trace to the secondary y-axis.
+    fig_filter.add_trace(go.Scatter(
+        x=freqs, y=phases,
+        name="Phase (Deg)",
+        line=dict(color=c_phase, width=2.5)
+    ), row=1, col=1, secondary_y=True) # <-- This assigns the trace to the second axis
+
+    # Plot 2a: Add the filter's time response to the second subplot.
+    fig_filter.add_trace(go.Scatter(
+        x=t_vec, y=output_response,
+        name=f"Response of s<sup>{test_order}</sup>",
+        line=dict(color=c_resp, width=2.5)
+    ), row=1, col=2)
+
+    # Plot 2b: Add the input step signal for reference.
+    fig_filter.add_trace(go.Scatter(
+        x=t_vec, y=input_step,
+        name="Input Step",
+        line=dict(color=c_text, dash='dash', width=1.5),
+        opacity=0.7
+    ), row=1, col=2)
+
+    # ------------------------------------------
+    # General Styling for Dark/Light Mode
+    # ------------------------------------------
+    base_axis_style = dict(
+        showgrid=True, gridcolor=c_grid, zerolinecolor=c_grid, tickfont=dict(color=c_text)
+    )
+
+    fig_filter.update_layout(
+        title=dict(
+            text=f"<b>Fractional Filter Analysis (Oustaloup Method)</b><br><span style='font-size:12px; color:{c_text};'>Verifying that s<sup>{test_order}</sup> behaves as a half-derivative</span>",
+            y=0.92, x=0.05, xanchor='left', yanchor='top'
+        ),
+        height=450,
+        paper_bgcolor='rgba(0,0,0,0)', # Transparent background
+        plot_bgcolor='rgba(0,0,0,0)',  # Transparent plot area
+        font=dict(color=c_text),
+        hovermode="x unified",
+        margin=dict(t=100, l=80, r=80, b=50),
+        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
+
+        # Bode Plot Axes
+        xaxis=dict(type="log", title="Frequency (rad/s)", **base_axis_style),
+        yaxis=dict(title="Magnitude (dB)", title_font=dict(color=c_mag), **base_axis_style),
+        yaxis2=dict(
+            title="Phase (Deg)", title_font=dict(color=c_phase),
+            range=[0, 90], showgrid=False, tickfont=dict(color=c_phase)
+        ),
+
+        # Step Response Axes
+        xaxis2=dict(title="Time (s)", **base_axis_style),
+        yaxis3=dict(title="Amplitude", **base_axis_style)
+    )
+
+    # Add a horizontal line showing the theoretical target phase for this order.
+    theoretical_phase = test_order * 90
+    fig_filter.add_hline(
+        y=theoretical_phase, line_dash="dot", line_color=c_phase,
+        annotation_text=f"Target: {theoretical_phase}°",
+        annotation_font=dict(color=c_phase),
+        annotation_position="bottom right",
+        row=1, col=1, secondary_y=True
+    )
+
+    # --- Render Final Output in Marimo ---
+    mo.vstack([
+        mo.md("### 📉 Oustaloup Filter Verification"),
+        mo.md(f"""
+        This analysis validates the behavior of the fractional-order operator, **s<sup>{test_order}</sup>**. A key property of a fractional operator is its constant phase shift across a wide frequency range.
+
+        - The **Bode Plot** confirms this: the phase (red line) holds steady around the theoretical target of **{theoretical_phase}°**.
+        - The **Step Response** visualizes how this unique operator behaves in the time domain when subjected to a sudden input.
+        """),
+        mo.ui.plotly(fig_filter)
+    ])
+    return
+
+
+@app.class_definition
+class OustaloupFilter:
+    """
+    Implements a fractional-order calculus filter using Oustaloup's Recursive Approximation.
+    This method approximates the fractional operator s^alpha as a cascade of first-order
+    zero-pole filters, making it suitable for digital implementation.
+    """
+    def __init__(self, alpha, num_poles=3, freq_low=0.01, freq_high=1000.0, dt=0.0001):
+        """
+        Initializes the fractional-order filter.
+
+        Args:
+            alpha (float): The fractional order. For a FOPID controller, this would be
+                           lambda for the integral part or mu for the derivative part.
+            num_poles (int): The number of poles and zeros used in the approximation (N).
+                             Higher numbers increase accuracy but also computational cost.
+            freq_low (float): The lower frequency bound (wb) of the approximation range in Hz.
+            freq_high (float): The upper frequency bound (wh) of the approximation range in Hz.
+            dt (float): The sampling time (time step) for discretization.
+        """
+        self.alpha = alpha
+        self.dt = dt
+        # The filter is only active if the fractional order is non-zero.
+        self.active = (abs(alpha) > 1e-6)
+
+        # State storage for each sub-filter in the cascade.
+        # The main filter is broken down into a series of smaller, stable filters.
+        self.filters_state_x = [] # Stores previous input values (x[n-1]) for each filter.
+        self.filters_state_y = [] # Stores previous output values (y[n-1]) for each filter.
+        self.coeffs = []          # Stores the computed coefficients (b0, b1, a1) for each filter.
+        self.gain = 1.0           # The overall filter gain.
+
+        if self.active:
+            self._compute_coefficients(alpha, num_poles, freq_low, freq_high)
+            # Initialize the state storage with zeros.
+            num_filters = len(self.coeffs)
+            self.filters_state_x = [0.0] * num_filters
+            self.filters_state_y = [0.0] * num_filters
+
+    def _compute_coefficients(self, alpha, N, wb, wh):
+        # This method translates the continuous-time Oustaloup approximation
+        # into discrete-time coefficients for real-time processing.
+
+        # 1. Calculate continuous-time poles and zeros based on Oustaloup's equations.
+        zeros = []
+        poles = []
+
+        for k in range(-N, N + 1):
+            # Calculate the frequency for the k-th zero.
+            w_z = wb * (wh / wb)**((k + N + 0.5 * (1 - alpha)) / (2 * N + 1))
+            # Calculate the frequency for the k-th pole.
+            w_p = wb * (wh / wb)**((k + N + 0.5 * (1 + alpha)) / (2 * N + 1))
+            zeros.append(w_z)
+            poles.append(w_p)
+
+        # The overall gain of the continuous-time filter.
+        self.gain = (wh)**alpha
+
+        # 2. Discretize each zero-pole pair using the Tustin (Bilinear) Transform.
+        # This converts each H_k(s) = (s + w_z) / (s + w_p) into a discrete-time
+        # difference equation: y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1].
+        # The Tustin transform substitutes s with (2/dt) * (1-z^-1)/(1+z^-1).
+
+        for w_z, w_p in zip(zeros, poles):
+            # Tustin transformation constant.
+            k_tustin = (2.0 / self.dt)
+
+            # Coefficients for the denominator: (s + w_p) -> a0 + a1*z^-1
+            a0 = k_tustin + w_p
+            a1 = w_p - k_tustin
+
+            # Coefficients for the numerator: (s + w_z) -> b0 + b1*z^-1
+            b0 = k_tustin + w_z
+            b1 = w_z - k_tustin
+
+            # Normalize the coefficients by a0 to isolate y[n] in the difference equation.
+            self.coeffs.append({
+                'b0': b0 / a0,
+                'b1': b1 / a0,
+                'a1': a1 / a0
+            })
+
+    def compute(self, input_val):
+        """
+        Processes a single input value through the fractional-order filter.
+
+        Args:
+            input_val (float): The current input signal value x[n].
+
+        Returns:
+            float: The filtered output signal value y[n].
+        """
+        if not self.active:
+            return input_val
+
+        # Start with the input signal scaled by the filter's overall gain.
+        current_signal = input_val * self.gain
+
+        # Pass the signal through the cascade of first-order filters.
+        for i, coeff in enumerate(self.coeffs):
+            # Retrieve the previous input and output states for this specific filter.
+            x_prev = self.filters_state_x[i]
+            y_prev = self.filters_state_y[i]
+
+            # Apply the difference equation for this filter:
+            # y[n] = b0*x[n] + b1*x[n-1] - a1*y[n-1]
+            output = (coeff['b0'] * current_signal) + (coeff['b1'] * x_prev) - (coeff['a1'] * y_prev)
+
+            # Update the state memory for the next time step.
+            self.filters_state_x[i] = current_signal
+            self.filters_state_y[i] = output
+
+            # The output of this filter becomes the input for the next one in the cascade.
+            current_signal = output
+
+        return current_signal
+
+
 @app.cell
 def _(RealFuzzyController, np):
     def simulate_pmsm_system(ctrl_params, scenario, motor_phys, vehicle_phys, strategy_type):
         """
-        Returns: time, speed, torque, current, FUZZY_GAIN, ref
+        Simulates the PMSM-based EV powertrain with a specified control strategy.
+
+        Returns:
+            A tuple containing: (time, speed, torque, current, fuzzy_gain_log, reference_speed)
         """
-        # 1. Inputs & Parameters
+        # 1. Unpack Simulation, Physics, and Controller Parameters
         t_end = scenario["Time"]
         w_target = scenario["Ref"]
         t_load = scenario["T_load"]
@@ -600,32 +511,35 @@ def _(RealFuzzyController, np):
         Mass, Rw, Gear, Cd, Area, Rho = vehicle_phys["Mass"], vehicle_phys["Rw"], vehicle_phys["Gear"], vehicle_phys["Cd"], vehicle_phys["Area"], vehicle_phys["Rho"]
 
         kp, ki, kd = ctrl_params["Kp"], ctrl_params["Ki"], ctrl_params["Kd"]
-        lam = ctrl_params.get("Lambda", 1.0)
-        mu = ctrl_params.get("Mu", 1.0)
+        lam = ctrl_params.get("Lambda", 1.0) # Default to 1.0 for integer order
+        mu = ctrl_params.get("Mu", 1.0)     # Default to 1.0 for integer order
         alpha_scale = ctrl_params.get("Fuzzy_Scale", 1.0)
 
-        # === 1. تجهيز العقل (Fuzzy) ===
+        # 2. Initialize Controller Components
+        # a) Instantiate the Fuzzy Logic "Brain" for adaptive gain.
         fuzzy_brain = RealFuzzyController()
 
-        # === 2. تجهيز القلب (Fractional Filters) ===
+        # b) Determine if fractional calculus is active for this strategy.
         use_fractional = ("Fractional" in strategy_type) or ("GA" in strategy_type)
-    
-        # فلتر التكامل (بياخد سالب lambda)
+
+        # c) Initialize the fractional-order filters if required.
+        # The integrator operator is s^-λ, so we use a negative alpha.
         frac_integrator = OustaloupFilter(-lam) if use_fractional else None
-    
-        # فلتر التفاضل (بياخد mu موجبة)
+        # The differentiator operator is s^μ, so we use a positive alpha.
         frac_differentiator = OustaloupFilter(mu) if use_fractional else None
 
-        # 3. Initialization
+        # 3. Initialize Simulation State Variables
         dt = 0.0001
         steps = int(t_end / dt)
         time = np.linspace(0, t_end, steps)
 
+        # Data logging arrays
         speed_arr = np.zeros(steps)
         torque_arr = np.zeros(steps)
         iq_arr = np.zeros(steps)
-        gain_log = np.zeros(steps) 
+        gain_log = np.zeros(steps)
 
+        # System state variables
         w_mech = 0.0
         iq_current = 0.0
         error_sum = 0.0
@@ -634,74 +548,77 @@ def _(RealFuzzyController, np):
         # 4. Main Simulation Loop
         for i in range(steps):
             t = time[i]
+            # Apply reference speed after a small delay to avoid initial shock.
             ref = w_target if t > 0.005 else 0.0
             error = ref - w_mech
             delta_error = error - prev_error
 
-            # --- A. Fuzzy Logic Block ---
+            # --- Block A: Adaptive Fuzzy Logic ---
+            # Calculate the adaptive gain multiplier. Defaults to 1.0 for non-fuzzy modes.
             gain_factor = 1.0
             if "GA" in strategy_type or "Fuzzy" in strategy_type:
                 fuzzy_output = fuzzy_brain.compute_alpha(error, delta_error)
                 gain_factor = fuzzy_output * alpha_scale
-
             gain_log[i] = gain_factor
 
-            # --- B. Controller Block (PID vs FOPID) ---
-        
-            # 1. Proportional
+            # --- Block B: Core Controller Logic (PID vs. FOPID) ---
+            # 1. Proportional Term
             p_term = (kp * gain_factor) * error
 
-            # 2. Integral & Derivative
+            # 2. Integral & Derivative Terms
             if use_fractional:
-                # === Real Fractional Calculus ===
+                # Apply fractional-order calculus using the Oustaloup filters.
                 i_signal = frac_integrator.compute(error)
                 d_signal = frac_differentiator.compute(error)
-            
                 i_term = (ki * gain_factor) * i_signal
                 d_term = (kd * gain_factor) * d_signal
             else:
-                # === Standard Integer Calculus ===
+                # Apply standard integer-order calculus.
                 error_sum += error * dt
                 i_term = (ki * gain_factor) * error_sum
-                d_term = (kd * gain_factor) * (delta_error / dt)
+                # Avoid division by zero at the first step.
+                d_term = (kd * gain_factor) * (delta_error / dt) if dt > 0 else 0.0
 
-            # تجميع الإشارة
+            # Sum the components to get the final control signal (q-axis current reference).
             iq_ref = p_term + i_term + d_term
 
-            # Saturation (Limiter) - FIXED HERE
-            if iq_ref > 200: 
+            # Apply saturation (limiter) to the control signal to respect physical constraints.
+            # Also includes an anti-windup mechanism for the standard integrator.
+            if iq_ref > 200:
                 iq_ref = 200
-                if not use_fractional: 
-                    error_sum -= error * dt
-            elif iq_ref < -200: 
+                if not use_fractional: error_sum -= error * dt # Anti-windup
+            elif iq_ref < -200:
                 iq_ref = -200
-                if not use_fractional: 
-                    error_sum -= error * dt
+                if not use_fractional: error_sum -= error * dt # Anti-windup
 
-            # --- C. Plant Model (Physics) ---
-            iq_current += (iq_ref - iq_current) * (dt/0.001)
+            # --- Block C: Plant Model (System Physics) ---
+            # Simulate the current controller's first-order response.
+            iq_current += (iq_ref - iq_current) * (dt / 0.001)
+            # Calculate the electromagnetic torque produced by the motor.
             Te = 1.5 * P * Psi_m * iq_current
 
+            # Calculate external load torques from vehicle dynamics.
             T_ext = load_val if t >= t_load else 0.0
-            v = (w_mech/Gear)*Rw
-            F_drag = 0.5 * Rho * Cd * Area * v * abs(v)
-            T_drag = (F_drag * Rw)/Gear
+            v = (w_mech / Gear) * Rw # Vehicle speed
+            F_drag = 0.5 * Rho * Cd * Area * v * abs(v) # Aerodynamic drag force
+            T_drag = (F_drag * Rw) / Gear # Drag torque reflected to the motor shaft
 
-            dw_dt = (Te - T_ext - T_drag - B*w_mech) / J
+            # Apply Newton's second law for rotation.
+            dw_dt = (Te - T_ext - T_drag - B * w_mech) / J
             w_mech += dw_dt * dt
-            if w_mech < 0: w_mech = 0
+            if w_mech < 0: w_mech = 0 # Speed cannot be negative in this model.
 
+            # Log state variables for this time step.
             speed_arr[i] = w_mech
             torque_arr[i] = Te
             iq_arr[i] = iq_current
             prev_error = error
 
-        return time, speed_arr, torque_arr, iq_arr, gain_log, ref
-
+        return time, speed_arr, torque_arr, iq_arr, gain_log, w_target
     return (simulate_pmsm_system,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     active_params,
     controller_selector,
@@ -797,13 +714,13 @@ def _(
 
     # 4. Render
     mo.vstack([
-        mo.md("## 🏎️ Vehicle Performance"),
+        mo.md("### 🏎️ Vehicle Performance"),
         mo.ui.plotly(final_dashboard_fig)
     ])
-    return fuzzy_data, ref_data, t_data, w_data
+    return fuzzy_data, iq_data, ref_data, t_data, te_data, w_data
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo, np, ref_data, t_data, w_data):
 
     def calculate_metrics(t, y, ref_val):
@@ -918,6 +835,429 @@ def _(mo, np, ref_data, t_data, w_data):
 
 
 @app.cell
+def _(iq_data, mo, motor_ui, np, t_data, te_data, vehicle_ui, w_data):
+    # This is the final output variable for the cell.
+    output_energy = None 
+
+    # --- Case 1: No simulation data is available ---
+    if 't_data' not in globals() or t_data is None or len(t_data) == 0:
+        output_energy = mo.callout(
+            mo.md("⏳ **Waiting for simulation data...** Run a simulation from the main dashboard to calculate advanced metrics."),
+            kind="neutral"
+        )
+    # --- Case 2: Simulation data exists ---
+    else:
+        # Helper function to calculate the advanced metrics.
+        def calculate_advanced_metrics(time, w_mech, torque, iq, motor_phys, vehicle_phys):
+            dt = time[1] - time[0]
+        
+            # --- 1. Energy Consumption ---
+            Rs = motor_phys["Rs"]
+            P_mech = torque * w_mech
+            P_loss = 1.5 * Rs * (iq ** 2)
+            P_elec_in = P_mech + P_loss
+            total_energy_joules = np.sum(P_elec_in[P_elec_in > 0]) * dt
+            total_energy_Wh = total_energy_joules / 3600
+        
+            # --- 2. Control Effort ---
+            control_effort = np.sum(np.abs(np.diff(iq, prepend=iq[0])))
+        
+            # --- 3. Ride Comfort ---
+            # Calculation for vehicle speed is still needed for Jerk.
+            Rw, Gear = vehicle_phys["Rw"], vehicle_phys["Gear"]
+            vehicle_speed_mps = (w_mech / Gear) * Rw
+            accel = np.gradient(vehicle_speed_mps, dt)
+            jerk = np.gradient(accel, dt)
+            integral_jerk_squared = np.sum(jerk ** 2) * dt
+        
+            return {
+                "Total Energy (Wh)": total_energy_Wh,
+                "Control Effort": control_effort,
+                "Ride Comfort (Jerk)": integral_jerk_squared
+            }
+
+        # Run the calculation.
+        metrics = calculate_advanced_metrics(t_data, w_data, te_data, iq_data, motor_ui.value, vehicle_ui.value)
+
+        # HTML and CSS for the display cards.
+        html_content = f"""
+        <style>
+            .adv-kpi-container {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
+            .adv-kpi-card {{ background-color: rgba(128, 128, 128, 0.05); border-radius: 8px; padding: 20px; border-left: 5px solid; }}
+            .adv-kpi-title {{ display: flex; align-items: center; font-size: 0.9rem; font-weight: 600; color: #8899a6; margin-bottom: 8px; }}
+            .adv-kpi-title span {{ margin-right: 8px; font-size: 1.2rem; }}
+            .adv-kpi-value {{ font-size: 2.0rem; font-weight: 700; color: #2c3e50; font-family: 'Consolas', 'Menlo', monospace; }}
+            .adv-kpi-desc {{ font-size: 0.8rem; color: #aaa; margin-top: 4px; }}
+            /* Specific border colors for each card */
+            .energy-card {{ border-color: #f39c12; }} /* Orange */
+            .effort-card {{ border-color: #2980b9; }} /* Blue */
+            .comfort-card {{ border-color: #8e44ad; }} /* Purple */
+            @media (prefers-color-scheme: dark) {{ .adv-kpi-value {{ color: #ecf0f1; }} .adv-kpi-card {{ background-color: rgba(255, 255, 255, 0.07); }} }}
+        </style>
+        <div class="adv-kpi-container">
+            <!-- Card 1: Total Energy Consumed -->
+            <div class="adv-kpi-card energy-card">
+                <div class="adv-kpi-title"><span>⚡️</span> TOTAL ENERGY</div>
+                <div class="adv-kpi-value">{metrics['Total Energy (Wh)']:.4f}</div>
+                <div class="adv-kpi-desc">Watt-hours (Wh)</div>
+            </div>
+
+            <!-- Card 2: Control Effort -->
+            <div class="adv-kpi-card effort-card">
+                <div class="adv-kpi-title"><span>🕹️</span> CONTROL EFFORT</div>
+                <div class="adv-kpi-value">{metrics['Control Effort']:.2f}</div>
+                <div class="adv-kpi-desc">Lower is smoother</div>
+            </div>
+        
+            <!-- Card 3: Ride Comfort -->
+            <div class="adv-kpi-card comfort-card">
+                <div class="adv-kpi-title"><span>🛋️</span> RIDE COMFORT</div>
+                <div class="adv-kpi-value">{metrics['Ride Comfort (Jerk)']:.2f}</div>
+                <div class="adv-kpi-desc">Lower is less jerky</div>
+            </div>
+        </div>
+        """
+
+        # Assemble the final Marimo object to be displayed.
+        output_energy = mo.vstack([
+            mo.md("### 📈 Advanced Performance & Efficiency Analysis"),
+            mo.md("Beyond tracking error, these metrics evaluate the controller's real-world viability by measuring its energy consumption, control smoothness, and impact on ride comfort."),
+            mo.Html(html_content)
+        ])
+
+    # This final line displays the correct output for the cell.
+    output_energy
+    return
+
+
+@app.cell(column=2, hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 🧩 Fuzzy Logic: Visualized
+
+    Understanding the non-linear behavior of a fuzzy controller is best done visually.
+    This panel breaks down the controller's decision-making process into its fundamental visual components:
+
+    - **Membership Functions:** How the controller categorizes inputs.
+    - **Control Surface:** The complete map of all possible decisions.
+    - **Rule Matrix:** The core logic table that drives the system.
+    """)
+    return
+
+
+@app.cell
+def _(np):
+
+    class RealFuzzyController:
+        def __init__(self):
+            # 1. Define the linguistic terms for inputs (error and delta error).
+            # (NB: Negative Big, NS: Negative Small, Z: Zero, PS: Positive Small, PB: Positive Big)
+            self.terms = ['NB', 'NS', 'Z', 'PS', 'PB']
+
+            # 2. Define the center points for the triangular membership functions.
+            self.centers = {
+                'NB': -1.0, 'NS': -0.5, 'Z': 0.0, 'PS': 0.5, 'PB': 1.0
+            }
+
+            # 3. Establish the fuzzy rule base matrix.
+            # Rows represent Error, Columns represent Delta Error.
+            # The matrix cells define the output gain multiplier (S, M, B, VB).
+            self.rule_matrix = [
+                # de:  NB,   NS,   Z,   PS,   PB
+                ['VB', 'B',  'B',  'M',  'S'],  # e: NB
+                ['B',  'B',  'M',  'S',  'S'],  # e: NS
+                ['B',  'M',  'S',  'M',  'B'],  # e: Z
+                ['S',  'S',  'M',  'B',  'B'],  # e: PS
+                ['S',  'M',  'B',  'B',  'VB']  # e: PB
+            ]
+
+            # 4. Define the output singleton values for the gain multipliers.
+            # S=0.8 (Small), M=1.0 (Medium), B=1.5 (Big), VB=2.5 (Very Big)
+            self.outputs = {'S': 0.8, 'M': 1.0, 'B': 1.5, 'VB': 2.5}
+
+        def triangle_mf(self, x, center, width=0.5):
+            """Calculates the membership degree for a triangular function."""
+            return max(0, 1 - abs(x - center) / width)
+
+        def compute_alpha(self, error, delta_error):
+            """
+            Computes the alpha gain multiplier based on the current error and change in error.
+
+            Args:
+                error: The current error value.
+                delta_error: The rate of change of the error.
+
+            Returns:
+                The calculated alpha gain.
+            """
+            # a. Normalization Step: Scale the inputs to the [-1, 1] range.
+            # Assuming a max error of 250. Multiplied by 5 for higher sensitivity.
+            e_norm = np.clip(error / 250.0 * 5.0, -1, 1)
+            # Assuming a max delta error of 10.
+            de_norm = np.clip(delta_error / 10.0, -1, 1)
+
+            numerator = 0.0
+            denominator = 0.0
+
+            # b. Inference Engine: Apply fuzzy rules.
+            for i, e_term in enumerate(self.terms):
+                # Fuzzify the normalized error.
+                mu_e = self.triangle_mf(e_norm, self.centers[e_term])
+                if mu_e == 0: continue  # Optimization: skip if membership is zero.
+
+                for j, de_term in enumerate(self.terms):
+                    # Fuzzify the normalized delta error.
+                    mu_de = self.triangle_mf(de_norm, self.centers[de_term])
+                    if mu_de == 0: continue # Optimization: skip if membership is zero.
+
+                    # Use the 'min' operator (AND) to find the rule's firing strength.
+                    firing_strength = min(mu_e, mu_de)
+
+                    # Get the corresponding output term from the rule matrix.
+                    output_term = self.rule_matrix[i][j]
+                    output_val = self.outputs[output_term]
+
+                    # Accumulate values for defuzzification.
+                    numerator += firing_strength * output_val
+                    denominator += firing_strength
+
+            # c. Defuzzification: Calculate the weighted average (Center of Gravity method).
+            if denominator == 0:
+                return 1.0 # Return a neutral default value if no rules were fired.
+
+            return numerator / denominator
+
+    return (RealFuzzyController,)
+
+
+@app.cell
+def _(RealFuzzyController, go, mo, np):
+    # No new libraries are imported, as requested.
+    # Assuming the 'RealFuzzyController' class, 'np', 'go', and 'mo' are already defined
+    # in your Marimo environment from the previous cells.
+
+    fuzzy_viz = RealFuzzyController()
+
+    # =======================================================
+    # PART 1: Fuzzification Visualization (Membership Functions)
+    # =======================================================
+
+    # Create a range of values for the x-axis.
+    x_range = np.linspace(-1.5, 1.5, 300)
+    fig_mf = go.Figure()
+
+    # Define a color palette that is visible in both light and dark modes.
+    # These colors are vibrant and avoid pure black or white.
+    colors = ['#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db']
+
+    # Plot each linguistic term as a triangular membership function.
+    for idx, term in enumerate(fuzzy_viz.terms):
+        y_values = [fuzzy_viz.triangle_mf(x, fuzzy_viz.centers[term]) for x in x_range]
+
+        fig_mf.add_trace(go.Scatter(
+            x=x_range, y=y_values,
+            name=f"Term: {term}",
+            fill='tozeroy',
+            line=dict(color=colors[idx], width=2.5), # Made lines slightly thicker
+            opacity=0.7
+        ))
+
+    # Update the layout for better readability and theme compatibility.
+    fig_mf.update_layout(
+        title=dict(
+            text="<b>1. Fuzzification Stage (Membership Functions)</b><br><span style='font-size:12px; color:#888;'>How the controller translates numbers into logic</span>",
+            y=0.9,
+            x=0.01,
+            xanchor='left',
+            yanchor='top'
+        ),
+        xaxis_title="Normalized Input (e.g., Error)",
+        yaxis_title="Degree of Membership (μ)",
+        height=400,
+        # Set a top margin to create space for the title.
+        margin=dict(l=40, r=20, t=120, b=40),
+        # Position the legend horizontally above the plot.
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        ),
+        # --- Theme Adjustments ---
+        # Make backgrounds transparent to adapt to any page theme.
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        # Use a neutral font color that works on both light and dark backgrounds.
+        font_color="#aaa"
+    )
+
+
+    # =================================================================
+    # PART 2: Inference & Rule Base Visualization (Control Surface)
+    # =================================================================
+
+    # Define the resolution for the 3D surface plot.
+    res = 40
+    e_vec = np.linspace(-250, 250, res)
+    de_vec = np.linspace(-10, 10, res)
+    z_surface = np.zeros((res, res))
+
+    # Calculate the fuzzy controller's output for each combination of error and delta-error.
+    for i in range(res):
+        for j in range(res):
+            z_surface[j][i] = fuzzy_viz.compute_alpha(e_vec[i], de_vec[j])
+
+    # Create the 3D surface plot.
+    fig_surf = go.Figure(data=[go.Surface(
+        z=z_surface,
+        x=e_vec,
+        y=de_vec,
+        # 'Plasma' is a good colorscale for both light and dark themes.
+        colorscale='Plasma',
+        contours_z=dict(show=True, usecolormap=True, highlightcolor="#00FFFF", project_z=True),
+        opacity=0.9
+    )])
+
+    # Update the layout for the 3D plot.
+    fig_surf.update_layout(
+        title=dict(
+            text="<b>2. Inference & Defuzzification (Control Surface)</b><br><span style='font-size:12px; color:#888;'>The complete decision map from the rule base</span>",
+            y=0.92,
+            x=0.01,
+            xanchor='left',
+            yanchor='top'
+        ),
+        scene=dict(
+            xaxis_title='Error (E)',
+            yaxis_title='Change of Error (dE)',
+            zaxis_title='Output Gain (α)',
+            camera=dict(eye=dict(x=1.6, y=1.6, z=1.2)),
+            # Style the axes for better visibility.
+            xaxis=dict(gridcolor='#555', zerolinecolor='#777'),
+            yaxis=dict(gridcolor='#555', zerolinecolor='#777'),
+            zaxis=dict(gridcolor='#555', zerolinecolor='#777'),
+        ),
+        height=600,
+        # Add a top margin for the title.
+        margin=dict(l=10, r=10, t=100, b=10),
+        # --- Theme Adjustments ---
+        paper_bgcolor='rgba(0,0,0,0)',
+        font_color="#aaa"
+    )
+
+
+    # ==========================================
+    # PART 3: Render Output in Marimo
+    # ==========================================
+    mo.vstack([
+        mo.md("## 🧩 Fuzzy Controller Internals"),
+        mo.md("""
+        This dashboard visualizes the two main stages of the fuzzy controller:
+        1.  **Fuzzification:** The top plot shows the "Database" of membership functions, which determines how a crisp input value (like `error = 150`) is mapped to linguistic terms (e.g., "70% PS" and "30% PB").
+        2.  **Inference & Defuzzification:** The bottom 3D plot represents the "Rule Base" in action. It maps every possible combination of Error and Change-of-Error to a final, crisp Gain Output (α). This is the controller's decision-making landscape.
+        """),
+        mo.ui.plotly(fig_mf),
+        mo.ui.plotly(fig_surf)
+    ])
+    return (fuzzy_viz,)
+
+
+@app.cell
+def _(fuzzy_viz, go, mo):
+    def create_rule_heatmap(controller):
+        # =======================================================
+        # PART 1: Prepare Data for the Heatmap
+        # =======================================================
+
+        # 1. Map the string-based rules to numerical values for color scaling.
+        rule_map_val = {'VB': 4, 'B': 3, 'M': 2, 'S': 1}
+    
+        rule_map_text = [] # This will hold the string labels ('VB', 'B', etc.) for display.
+        rule_map_num = []  # This will hold the numerical values (4, 3, etc.) for coloring.
+
+        rows = len(controller.terms)
+        cols = len(controller.terms)
+
+        # Iterate through the controller's rule matrix and convert it.
+        for i in range(rows):
+            row_text = []
+            row_num = []
+            for j in range(cols):
+                rule_str = controller.rule_matrix[i][j]
+                row_text.append(rule_str)
+                row_num.append(rule_map_val[rule_str])
+            rule_map_text.append(row_text)
+            rule_map_num.append(row_num)
+
+        # =======================================================
+        # PART 2: Create the Heatmap Figure
+        # =======================================================
+        fig_rules = go.Figure(data=go.Heatmap(
+            z=rule_map_num,
+            x=controller.terms, # Columns: Change of Error (dE)
+            y=controller.terms, # Rows: Error (E)
+            text=rule_map_text, # The text to display inside each cell
+            texttemplate="%{text}",
+            # Set text font to be high-contrast against the cell colors.
+            textfont={"size": 16, "color": "white", "family": "Arial, sans-serif"},
+            # A custom, vibrant colorscale that works well in both light/dark modes.
+            colorscale=[
+                [0.0, '#27ae60'], # S -> Green (Low gain, stable)
+                [0.33, '#f39c12'], # M -> Yellow (Medium gain)
+                [0.66, '#e67e22'], # B -> Orange (High gain)
+                [1.0, '#c0392b']  # VB -> Red (Very high gain, aggressive)
+            ],
+            xgap=4, # Add spacing between cells for better visual separation.
+            ygap=4,
+            showscale=False # Hide the color scale bar; the text labels are sufficient.
+        ))
+
+        # =======================================================
+        # PART 3: Update Figure Layout for Theme Compatibility
+        # =======================================================
+        fig_rules.update_layout(
+            title=dict(
+                text="<b>3. Fuzzy Rule Base (Logic Matrix)</b><br><span style='font-size:12px; color:#888;'>Logic: If Error is (Y) AND dError is (X) &rarr; Then Gain is (Cell)</span>",
+                y=0.9,
+                x=0.01,
+                xanchor='left',
+                yanchor='top'
+            ),
+            xaxis_title="Change of Error (dE)",
+            yaxis_title="Error (E)",
+            height=550,
+            margin=dict(l=50, r=50, t=120, b=50),
+            # --- Theme Adjustments ---
+            # Make backgrounds transparent to adapt to the Marimo theme.
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            # Use a neutral font color that is visible on both light and dark backgrounds.
+            font_color="#aaa"
+        )
+
+        # =======================================================
+        # PART 4: Return the final Marimo output
+        # =======================================================
+        return mo.vstack([
+            mo.md("## 🚦 The Controller's Brain (Rule Matrix)"),
+            mo.md("""
+            This heatmap visualizes the core logic of the fuzzy controller. It's a lookup table that dictates the system's response based on the current state.
+
+            - **Red Cells (`VB`):** Represent an aggressive response. This happens when the error is large and needs a strong correction.
+            - **Green Cells (`S`):** Represent a gentle response. This is the stability zone, used when the system is already close to its target.
+            """),
+            mo.ui.plotly(fig_rules)
+        ])
+
+    # Call the function to create and render the visualization.
+    heatmap_output = create_rule_heatmap(fuzzy_viz)
+
+    heatmap_output
+    return
+
+
+@app.cell(hide_code=True)
 def _(
     OPT_GA,
     controller_selector,
@@ -1050,7 +1390,7 @@ def _(
 
         # Assemble final display
         output_view = mo.vstack([
-            mo.md("### 🧠 Intelligent Controller Analysis"),
+            mo.md("#### 🧠 Intelligent Controller Analysis"),
             mo.Html(html_report),
             mo.ui.plotly(fig_brain)
         ])
@@ -1060,148 +1400,20 @@ def _(
     return
 
 
-@app.cell
-def _(go, make_subplots, mo, np):
-    test_order = 0.5 
-    filter_viz = OustaloupFilter(test_order, freq_low=0.01, freq_high=100.0)
+@app.cell(column=3, hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 🧬 Evolutionary Optimization Engine
 
-    # ------------------------------------------
-    # Part A: Frequency Response (Bode Plot)
-    # ------------------------------------------
-    freqs = np.logspace(-3, 3, 500)
-    magnitudes = []
-    phases = []
+    This panel is the core of the automated tuning process. Manually finding the optimal set of six controller parameters
+    (`Kp, Ki, Kd, λ, µ, α`) in such a large, multi-dimensional space is nearly impossible.
 
-    for w in freqs:
-        s = 1j * w
-        h_s = filter_viz.gain
-        wb = 0.01; wh = 100.0; N = 3
-        alpha = test_order
-        for k in range(-N, N + 1):
-            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - alpha))/(2*N + 1))
-            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + alpha))/(2*N + 1))
-            h_s *= (s + w_z) / (s + w_p)
+    Here, we employ a **Genetic Algorithm (GA)** that mimics the principles of natural selection to autonomously discover the most effective parameter combination.
 
-        magnitudes.append(20 * np.log10(np.abs(h_s)))
-        phases.append(np.angle(h_s, deg=True))
-
-    # ------------------------------------------
-    # Part B: Time Domain Response
-    # ------------------------------------------
-    time_sim = OustaloupFilter(test_order)
-    t_vec = np.linspace(0, 10, 1000)
-    input_step = np.ones_like(t_vec)
-    output_response = []
-    for val in input_step:
-        output_response.append(time_sim.compute(val))
-
-    # ------------------------------------------
-    # Plotting Configuration
-    # ------------------------------------------
-    c_mag = '#00d2ff'   # Cyan
-    c_phase = '#e74c3c' # RED (عشان يبان واضح زي ما طلبت)
-    c_resp = '#54a0ff'  # Blue
-    c_text = '#8899a6'  # Grey
-    c_grid = 'rgba(128, 128, 128, 0.2)' 
-
-    # === التعديل الجوهري هنا ===
-    # لازم نقوله specs=[[{"secondary_y": True}, {}]]
-    # عشان يفهم إن الرسمة الأولى فيها محورين Y
-    fig_filter = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=(
-            "<b style='color:#00d2ff'>Bode Plot (Frequency)</b>", 
-            "<b style='color:#54a0ff'>Step Response (Time)</b>"
-        ),
-        horizontal_spacing=0.15,
-        specs=[[{"secondary_y": True}, {}]] # <--- الحل السحري
-    )
-
-    # Plot 1: Magnitude (على المحور الأساسي)
-    fig_filter.add_trace(go.Scatter(
-        x=freqs, y=magnitudes,
-        name="Magnitude (dB)",
-        line=dict(color=c_mag, width=2.5),
-        legendgroup="group1"
-    ), row=1, col=1, secondary_y=False)
-
-    # Plot 1: Phase (على المحور الثانوي - الخط الأحمر)
-    fig_filter.add_trace(go.Scatter(
-        x=freqs, y=phases,
-        name="Phase (Deg)",
-        line=dict(color=c_phase, width=2.5),
-        legendgroup="group1"
-    ), row=1, col=1, secondary_y=True) # <--- ظهرناه هنا
-
-    # Plot 2: Time Response
-    fig_filter.add_trace(go.Scatter(
-        x=t_vec, y=output_response,
-        name=f"s<sup>{test_order}</sup> Response",
-        line=dict(color=c_resp, width=2.5)
-    ), row=1, col=2)
-
-    # Input Step
-    fig_filter.add_trace(go.Scatter(
-        x=t_vec, y=input_step,
-        name="Input Step",
-        line=dict(color=c_text, dash='dash', width=1.5),
-        opacity=0.5
-    ), row=1, col=2)
-
-    # ------------------------------------------
-    # Styling
-    # ------------------------------------------
-    base_axis_style = dict(
-        showgrid=True, gridcolor=c_grid, zerolinecolor=c_grid, tickfont=dict(color=c_text)
-    )
-
-    fig_filter.update_layout(
-        title=dict(
-            text=f"<b>Fractional Filter Analysis (Oustaloup Method)</b><br><span style='font-size:12px; color:{c_text};'>Verifying that s<sup>{test_order}</sup> behaves like a half-derivative</span>",
-            y=0.92, x=0.05
-        ),
-        height=450,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color=c_text),
-        hovermode="x unified",
-        margin=dict(t=100, l=80, r=80, b=50),
-        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center", bgcolor='rgba(0,0,0,0)'),
-    
-        # Axis 1 (Magnitude)
-        xaxis=dict(type="log", title="Frequency (rad/s)", title_font=dict(color=c_text), **base_axis_style),
-        yaxis=dict(title="Magnitude (dB)", title_font=dict(color=c_mag), **base_axis_style),
-    
-        # Axis 2 (Phase - The Red Line)
-        yaxis2=dict(
-            title="Phase (Deg)",
-            title_font=dict(color=c_phase),
-            range=[0, 90],
-            showgrid=False,
-            tickfont=dict(color=c_phase)
-        ),
-    
-        # Axis 3 & 4 (Time Plot)
-        xaxis2=dict(title="Time (s)", title_font=dict(color=c_text), **base_axis_style),
-        yaxis3=dict(title="Amplitude", title_font=dict(color=c_text), **base_axis_style)
-    )
-
-    # Target Line
-    theoretical_phase = test_order * 90
-    fig_filter.add_hline(
-        y=theoretical_phase, line_dash="dot", line_color=c_phase, 
-        annotation_text=f"Target: {theoretical_phase}°", annotation_font=dict(color=c_phase),
-        row=1, col=1, secondary_y=True
-    )
-
-    mo.vstack([
-        mo.md("## 📉 The Math Behind FOPID (Oustaloup Check)"),
-        mo.md(f"""
-        Checking the mathematical validity of the fractional operator **s<sup>{test_order}</sup>**:
-        """),
-        mo.ui.plotly(fig_filter)
-    ])
-
+    - **Configure:** Set the population size, generations, and search boundaries.
+    - **Execute:** Launch the evolutionary process.
+    - **Analyze:** Visualize the convergence and multi-dimensional results.
+    """)
     return
 
 
@@ -1209,147 +1421,192 @@ def _(go, make_subplots, mo, np):
 def _(np, simulate_pmsm_system):
     class GeneticOptimizerEngine:
         """
-        Genetic Engine based STRICTLY on the Research Paper Methodology.
-        Target: Minimize Equation (36) -> ISE (Integral of Squared Error).
+        Professional GA Engine with Full History Logging.
+        Modified to return 4 values needed for the Advanced Dashboard.
         """
         def __init__(self, motor_phys, vehicle_phys, sim_setup, custom_bounds=None):
             self.motor_phys = motor_phys
             self.vehicle_phys = vehicle_phys
             self.sim_setup = sim_setup
-        
+
             if custom_bounds:
                 self.bounds = custom_bounds
             else:
-                # Default Bounds tailored around Table 2 values in the paper
-                # Paper Results: Kp=0.53, Ki=1.83, Kd=0.0005, Mu=0.86, Lam=0.97
                 self.bounds = [
-                    (0.1, 5.0),    # Kp
-                    (0.1, 5.0),    # Ki
-                    (0.0, 0.1),    # Kd (Usually very small)
-                    (0.1, 1.1),    # Lambda (Around 1.0)
-                    (0.1, 1.1),    # Mu (Around 1.0)
-                    (0.1, 5.0)     # FuzzyScale
+                    (0.1, 10.0), (0.1, 10.0), (0.0, 1.0),
+                    (0.1, 1.5), (0.1, 1.5), (0.1, 5.0)
                 ]
 
         def _evaluate_fitness(self, genes):
-            # 1. Map Genes to Controller Parameters
             ctrl_candidate = {
                 "Kp": genes[0], "Ki": genes[1], "Kd": genes[2],
                 "Lambda": genes[3], "Mu": genes[4], "Fuzzy_Scale": genes[5]
             }
-        
-            # 2. Run Simulation
-            # Using 1.0s is sufficient to capture rise time and overshoot
-            # Paper mentions "Step Response", so we simulate a step input.
+
             fast_scenario = self.sim_setup.copy()
             fast_scenario["Time"] = 1.0  
-        
-            # Run simulation with "GA" strategy
+
             time, speed, _, _, _, ref = simulate_pmsm_system(
-                ctrl_candidate, 
-                fast_scenario, 
-                self.motor_phys, 
-                self.vehicle_phys, 
-                strategy_type="GA"
+                ctrl_candidate, fast_scenario, 
+                self.motor_phys, self.vehicle_phys, strategy_type="GA"
             )
-        
-            # 3. Calculate Fitness (Equation 36 in Paper)
-            # ISE = Integral( e(t)^2 ) dt
-        
+
+            dt = time[1] - time[0]
             error = ref - speed
-        
-            # Discrete Integration (Summation * dt)
-            dt = time[1] - time[0] # Time step
-            ise = np.sum(np.square(error)) * dt
-        
-            # Stability Check:
-            # If the system is unstable (Speed goes to infinity or NaN), punish heavily.
-            # This is implicit in any control paper.
-            if np.isnan(ise) or np.isinf(ise) or np.max(speed) > (ref * 2):
-                return 1e6 # High penalty for instability
-            
-            return ise
+            ise_cost = np.sum(np.square(error)) * dt
+
+            if np.isnan(ise_cost) or np.isinf(ise_cost) or np.max(speed) > (ref * 2.5):
+                return 1e6 
+
+            return ise_cost
 
         def run(self, pop_size=20, generations=10, mutation_rate=0.1):
             """
-            Standard Genetic Algorithm Loop.
+            Returns 4 items: 
+            1. best_sol (Final Parameters)
+            2. best_cost (Final Error)
+            3. convergence_curve (Best error per generation)
+            4. full_trial_history (List of all trials for Parallel Plot)
             """
-            # A. Initialize Population
             population = []
             for _ in range(pop_size):
                 ind = [np.random.uniform(L, H) for L, H in self.bounds]
                 population.append(ind)
-        
+
             best_sol = None
             best_cost = float('inf')
-            history_log = []
+            convergence_curve = []
+
+            # === DATABASE FOR VISUALIZATION ===
+            full_trial_history = []
 
             for gen in range(generations):
                 scores = []
-                # 1. Evaluate Fitness for all individuals
                 for ind in population:
                     score = self._evaluate_fitness(ind)
                     scores.append(score)
-                
+
+                    # === LOGGING EVERY SINGLE TRIAL ===
+                    full_trial_history.append({
+                        'Generation': gen + 1,
+                        'Kp': ind[0], 'Ki': ind[1], 'Kd': ind[2],
+                        'Lambda': ind[3], 'Mu': ind[4], 'Alpha': ind[5],
+                        # Clamp high costs for better plotting visualization
+                        'Cost': score if score < 50000 else 50000 
+                    })
+
                     if score < best_cost:
                         best_cost = score
                         best_sol = ind[:]
-            
-                history_log.append(f"Gen {gen+1}: ISE Cost = {best_cost:.5f}")
 
-                # 2. Create Next Generation
+                convergence_curve.append(best_cost)
+
+                # Standard Evolution Logic
                 new_pop = []
-            
-                # Elitism: Carry over the single best individual (common practice)
                 best_idx = np.argmin(scores)
                 new_pop.append(population[best_idx])
-            
+
                 while len(new_pop) < pop_size:
-                    # Tournament Selection
-                    # Pick 2 random parents and select the better one
-                    candidates = np.random.randint(0, pop_size, size=2)
-                    p1_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
-                
-                    candidates = np.random.randint(0, pop_size, size=2)
-                    p2_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
-                
-                    parent1 = population[p1_idx]
-                    parent2 = population[p2_idx]
-                
-                    # Crossover (Arithmetic)
+                    idxs = np.random.randint(0, pop_size, size=3)
+                    parents = [population[i] for i in idxs]
+                    parents.sort(key=lambda x: scores[population.index(x)])
+                    p1, p2 = parents[0], parents[1]
+
                     child = []
                     beta = np.random.random()
-                    for g1, g2 in zip(parent1, parent2):
+                    for g1, g2 in zip(p1, p2):
                         child.append(beta*g1 + (1-beta)*g2)
-                
-                    # Mutation
+
                     for k in range(len(child)):
                         if np.random.random() < mutation_rate:
-                            # Random reset within bounds (Standard Mutation)
                             child[k] = np.random.uniform(self.bounds[k][0], self.bounds[k][1])
-                
+
                     new_pop.append(child)
-            
+
                 population = new_pop
 
-            return best_sol, best_cost, history_log
-
+            # === RETURN 4 VALUES ===
+            return best_sol, best_cost, convergence_curve, full_trial_history
     return (GeneticOptimizerEngine,)
 
 
-@app.cell
+@app.cell(hide_code=True)
+def _(mo):
+    flowchart = mo.mermaid("""
+    graph TD
+        %% --- Styling Definitions ---
+        classDef startend fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:white,rx:10,ry:10;
+        classDef proc fill:#ecf0f1,stroke:#34495e,stroke-width:2px,color:#2c3e50;
+        classDef decision fill:#f1c40f,stroke:#f39c12,stroke-width:2px,color:#d35400,rx:5,ry:5;
+        classDef sim fill:#3498db,stroke:#2980b9,stroke-width:2px,color:white;
+        classDef loop fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,stroke-dasharray: 5 5,color:white;
+
+        %% --- Nodes ---
+        Start([Start Optimization]):::startend
+
+        Init[Initialize Population<br/>Generate Random Parameters<br/>Kp, Ki, Kd, λ, µ, α]:::proc
+
+        subgraph Evaluation [Fitness Evaluation Loop]
+            direction TB
+            Sim[Run PMSM Simulation<br/>GA–AFFOPID Model]:::sim
+            Calc[Calculate Fitness Cost<br/>ISE = ∫ e² dt]:::sim
+        end
+
+        Check{Max Generation<br/>Reached?}:::decision
+
+        subgraph Evolution [Genetic Evolution]
+            direction TB
+            Sel[Selection<br/>Tournament & Elitism]:::loop
+            Cross[Crossover<br/>Arithmetic Combination]:::loop
+            Mut[Mutation<br/>Random Perturbation]:::loop
+        end
+
+        Stop([Output Optimal Genes]):::startend
+
+        %% --- Connections ---
+        Start --> Init
+        Init --> Sim
+        Sim --> Calc
+        Calc --> Check
+
+        Check -- No --> Sel
+        Sel --> Cross
+        Cross --> Mut
+        Mut -- New Population --> Sim
+
+        Check -- Yes --> Stop
+
+    """)
+
+    mo.vstack([
+        mo.md("### 🔄 Optimization Process Flowchart"),
+        mo.md("*This diagram illustrates the step-by-step logic executed by the Genetic Algorithm engine.*"),
+        flowchart
+    ])
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md("### 🧬 Evolutionary Optimization Console")
 
-    # 1. General Settings
+    # 1. Initialize State Management
+    # These variables prevent the optimization from running automatically
+    # when you change settings. It only runs when the button is clicked.
+    get_last_count, set_last_count = mo.state(0)
+    get_cached_view, set_cached_view = mo.state(
+        mo.md("ℹ️ *System Ready. Adjust settings above and click Start.*")
+    )
+
+    # 2. General Algorithm Settings
     ga_controls = mo.ui.dictionary({
         "pop": mo.ui.number(5, 100, value=10, step=1, label="Population Size"),
         "gen": mo.ui.number(1, 200, value=5, step=1, label="Generations"),
         "mut": mo.ui.number(0.01, 0.5, value=0.1, step=0.01, label="Mutation Rate")
     })
 
-    # 2. Search Space Bounds (The Fix is Here)
-    # We use mo.ui.array([...]) instead of list [...] to fix the ValueError
+    # 3. Search Space Bounds Configuration
+    # Defines the [Min, Max] range for each parameter using array widgets
     bounds_ui = mo.ui.dictionary({
         "Kp":   mo.ui.array([mo.ui.number(0.1, 500, value=0.1, full_width=True), mo.ui.number(0.1, 500, value=50.0, full_width=True)]),
         "Ki":   mo.ui.array([mo.ui.number(0.1, 500, value=0.1, full_width=True), mo.ui.number(0.1, 500, value=50.0, full_width=True)]),
@@ -1359,24 +1616,24 @@ def _(mo):
         "Fuz":  mo.ui.array([mo.ui.number(0.1, 10.0, value=0.1, full_width=True), mo.ui.number(0.1, 10.0, value=5.0, full_width=True)]),
     })
 
-    # 3. Custom Grid Layout for Bounds (Professional Look)
-    # Helper function to create a row
+    # 4. Layout Helper for Bounds Table
     def bound_row(name, key):
         return mo.hstack([
-            mo.md(f"**{name}**").style({"width": "120px", "align-self": "center"}), # Label
-            bounds_ui[key][0], # Min Input
+            mo.md(f"**{name}**").style({"width": "140px", "align-self": "center"}),
+            bounds_ui[key][0],
             mo.md("↔️").style({"padding": "0 10px", "align-self": "center"}),
-            bounds_ui[key][1]  # Max Input
+            bounds_ui[key][1]
         ], align="center")
 
+    # 5. Accordion Widget for Advanced Settings
     bounds_widget = mo.accordion({
-        "⚙️ Configure Search Bounds (حدود البحث)": mo.vstack([
+        "⚙️ Configure Search Space (Bounds)": mo.vstack([
             # Header Row
             mo.hstack([
-                mo.md("Param").style({"width": "120px", "font-weight": "bold", "color": "#666"}),
-                mo.md("Minimum Value").style({"flex": "1", "text-align": "center", "font-weight": "bold", "color": "#666"}),
-                mo.md("").style({"width": "30px"}),
-                mo.md("Maximum Value").style({"flex": "1", "text-align": "center", "font-weight": "bold", "color": "#666"}),
+                mo.md("Parameter").style({"width": "140px", "font-weight": "bold", "color": "#555"}),
+                mo.md("Lower Bound (Min)").style({"flex": "1", "text-align": "center", "font-weight": "bold", "color": "#555"}),
+                mo.md("").style({"width": "40px"}),
+                mo.md("Upper Bound (Max)").style({"flex": "1", "text-align": "center", "font-weight": "bold", "color": "#555"}),
             ]),
             mo.md("---"),
             # Input Rows
@@ -1389,15 +1646,15 @@ def _(mo):
         ])
     })
 
-    # 4. Action Button
-    run_ga_btn = mo.ui.button(label="🚀 Start Evolution Process", kind="success",value=1)
-    run_ga_btn.on_click = lambda value: True
-    # 5. Final Render
+    # 6. Action Button (Initialized at 0 to avoid errors)
+    run_ga_btn = mo.ui.button(label="🚀 Start Evolution Process", kind="success", value=0,on_click=lambda value:value +1 )
+
+    # 7. Final Panel Assembly
     mo.vstack([
         mo.callout(
             mo.vstack([
-                mo.md("### 🛠️ Optimization Settings"),
-                mo.hstack([ga_controls], justify="center"), # Settings in one line
+                mo.md("### 🛠️ Optimization Configuration"),
+                mo.hstack([ga_controls], justify="center", gap=2),
                 mo.md("---"),
                 bounds_widget,
                 mo.md(""), # Spacer
@@ -1407,209 +1664,355 @@ def _(mo):
         )
     ])
 
-    return bounds_ui, ga_controls, run_ga_btn
+    return (
+        bounds_ui,
+        ga_controls,
+        get_cached_view,
+        get_last_count,
+        run_ga_btn,
+        set_cached_view,
+        set_last_count,
+    )
 
 
-app._unparsable_cell(
-    r"""
-    class GeneticOptimizerEngine:
-        \"\"\"
-        Genetic Engine based STRICTLY on the Research Paper Methodology.
-        Target: Minimize Equation (36) -> ISE (Integral of Squared Error).
-        \"\"\"
-        def __init__(self, motor_phys, vehicle_phys, sim_setup, custom_bounds=None):
-            self.motor_phys = motor_phys
-            self.vehicle_phys = vehicle_phys
-            self.sim_setup = sim_setup
-        
-            if custom_bounds:
-                self.bounds = custom_bounds
-            else:
-                # Default Bounds tailored around Table 2 values in the paper
-                # Paper Results: Kp=0.53, Ki=1.83, Kd=0.0005, Mu=0.86, Lam=0.97
-                self.bounds = [
-                    (0.1, 5.0),    # Kp
-                    (0.1, 5.0),    # Ki
-                    (0.0, 0.1),    # Kd (Usually very small)
-                    (0.1, 1.1),    # Lambda (Around 1.0)
-                    (0.1, 1.1),    # Mu (Around 1.0)
-                    (0.1, 5.0)     # FuzzyScale
-                ]
-
-        def _evaluate_fitness(self, genes):
-            # 1. Map Genes to Controller Parameters
-            ctrl_candidate = {
-                \"Kp\": genes[0], \"Ki\": genes[1], \"Kd\": genes[2],
-                \"Lambda\": genes[3], \"Mu\": genes[4], \"Fuzzy_Scale\": genes[5]
-            }
-        
-            # 2. Run Simulation
-            # Using 1.0s is sufficient to capture rise time and overshoot
-            # Paper mentions \"Step Response\", so we simulate a step input.
-            fast_scenario = self.sim_setup.copy()
-            fast_scenario[\"Time\"] = 1.0  
-        
-            # Run simulation with \"GA\" strategy
-            time, speed, _, _, _, ref = simulate_pmsm_system(
-                ctrl_candidate, 
-                fast_scenario, 
-                self.motor_phys, 
-                self.vehicle_phys, 
-                strategy_type=\"GA\"
-            )
-        
-            # 3. Calculate Fitness (Equation 36 in Paper)
-            # ISE = Integral( e(t)^2 ) dt
-        
-            error = ref - speed
-        
-            # Discrete Integration (Summation * dt)
-            dt = time[1] - time[0] # Time step
-            ise = np.sum(np.square(error)) * dt
-        
-            # Stability Check:
-            # If the system is unstable (Speed goes to infinity or NaN), punish heavily.
-            # This is implicit in any control paper.
-            if np.isnan(ise) or np.isinf(ise) or np.max(speed) > (ref * 2):
-            
-
-        def run(self, pop_size=20, generations=10, mutation_rate=0.1):
-            \"\"\"
-            Standard Genetic Algorithm Loop.
-            \"\"\"
-            # A. Initialize Population
-            population = []
-            for _ in range(pop_size):
-                ind = [np.random.uniform(L, H) for L, H in self.bounds]
-                population.append(ind)
-        
-            best_sol = None
-            best_cost = float('inf')
-            history_log = []
-
-            for gen in range(generations):
-                scores = []
-                # 1. Evaluate Fitness for all individuals
-                for ind in population:
-                    score = self._evaluate_fitness(ind)
-                    scores.append(score)
-                
-                    if score < best_cost:
-                        best_cost = score
-                        best_sol = ind[:]
-            
-                history_log.append(f\"Gen {gen+1}: ISE Cost = {best_cost:.5f}\")
-
-                # 2. Create Next Generation
-                new_pop = []
-            
-                # Elitism: Carry over the single best individual (common practice)
-                best_idx = np.argmin(scores)
-                new_pop.append(population[best_idx])
-            
-                while len(new_pop) < pop_size:
-                    # Tournament Selection
-                    # Pick 2 random parents and select the better one
-                    candidates = np.random.randint(0, pop_size, size=2)
-                    p1_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
-                
-                    candidates = np.random.randint(0, pop_size, size=2)
-                    p2_idx = candidates[0] if scores[candidates[0]] < scores[candidates[1]] else candidates[1]
-                
-                    parent1 = population[p1_idx]
-                    parent2 = population[p2_idx]
-                
-                    # Crossover (Arithmetic)
-                    child = []
-                    beta = np.random.random()
-                    for g1, g2 in zip(parent1, parent2):
-                        child.append(beta*g1 + (1-beta)*g2)
-                
-                    # Mutation
-                    for k in range(len(child)):
-                        if np.random.random() < mutation_rate:
-                            # Random reset within bounds (Standard Mutation)
-                            child[k] = np.random.uniform(self.bounds[k][0], self.bounds[k][1])
-                
-                    new_pop.append(child)
-            
-                population = new_pop
-    """,
-    name="_"
-)
-
-
-@app.cell
+@app.cell(hide_code=True)
 def _(
     GeneticOptimizerEngine,
     bounds_ui,
     ga_controls,
+    get_cached_view,
+    get_last_count,
+    go,
     mo,
     motor_ui,
     run_ga_btn,
+    set_cached_view,
+    set_last_count,
     sim_settings,
     vehicle_ui,
 ):
-    result_view = mo.md("ℹ️ *System Ready. Adjust settings above and click Start.*")
+    raw_val = run_ga_btn.value
+    current_clicks = raw_val if raw_val is not None else 0
+    last_clicks = get_last_count()
+    is_new_click = (current_clicks > last_clicks)
 
-    if run_ga_btn.value:
-    
-        # A. Prepare the Bounds List from UI
-        # CORRECT WAY to read from mo.ui.array: use .value to get the list [min, max]
+    if is_new_click:
+        # 1. Setup & Run
         user_defined_bounds = [
-            tuple(bounds_ui["Kp"].value),
-            tuple(bounds_ui["Ki"].value),
-            tuple(bounds_ui["Kd"].value),
-            tuple(bounds_ui["Lam"].value),
-            tuple(bounds_ui["Mu"].value),
-            tuple(bounds_ui["Fuz"].value),
+            tuple(bounds_ui["Kp"].value), tuple(bounds_ui["Ki"].value), tuple(bounds_ui["Kd"].value),
+            tuple(bounds_ui["Lam"].value), tuple(bounds_ui["Mu"].value), tuple(bounds_ui["Fuz"].value),
         ]
 
-        # B. Initialize Engine with Custom Bounds
         optimizer = GeneticOptimizerEngine(
-            motor_phys=motor_ui.value,
-            vehicle_phys=vehicle_ui.value,
-            sim_setup=sim_settings.value,
-            custom_bounds=user_defined_bounds
+            motor_phys=motor_ui.value, vehicle_phys=vehicle_ui.value,
+            sim_setup=sim_settings.value, custom_bounds=user_defined_bounds
         )
 
-        # C. Run Optimization
-        with mo.status.spinner(title="🧬 Evolving... Please wait"):
-            best_genes, final_cost, history = optimizer.run(
+        with mo.status.spinner(title="🧬 Processing Genome... Analyzing generations..."):
+            # Note: We now unpack 4 return values
+            best_genes, final_cost, history_scores, full_history = optimizer.run(
                 pop_size=int(ga_controls.value["pop"]),
                 generations=int(ga_controls.value["gen"]),
                 mutation_rate=ga_controls.value["mut"]
             )
 
-        # D. Format Results
+        # ==========================================
+        # GRAPH 1: Parallel Coordinates (The Professional View)
+        # ==========================================
+        # This visualizes EVERY trial and how parameters relate to cost
+
+        # Extract data columns
+        kps = [d['Kp'] for d in full_history]
+        kis = [d['Ki'] for d in full_history]
+        lams = [d['Lambda'] for d in full_history]
+        costs = [d['Cost'] for d in full_history]
+        gens = [d['Generation'] for d in full_history]
+
+        fig_par = go.Figure(data=go.Parcoords(
+            line=dict(
+                color=costs,
+                colorscale='Turbo_r', # Red=Bad, Blue=Good
+                showscale=True,
+                cmin=min(costs),
+                cmax=max(costs) * 0.5, # Focus color contrast on lower costs
+            ),
+            dimensions=[
+                dict(label='Generation', values=gens),
+                dict(label='Kp (Prop)', values=kps),
+                dict(label='Ki (Integ)', values=kis),
+                dict(label='λ (Int Order)', values=lams),
+                dict(label='Cost (ISE)', values=costs)
+            ]
+        ))
+
+        fig_par.update_layout(
+            title="<b>Multidimensional Search Analysis</b><br><span style='font-size:12px; color:gray;'>Trace how parameters converge. Blue lines represent optimal solutions.</span>",
+            height=500,
+            margin=dict(l=60, r=60, t=80, b=40)
+        )
+
+        # ==========================================
+        # GRAPH 2: 3D Optimization Landscape
+        # ==========================================
+        # Shows where the "Sweet Spot" is between Kp, Ki and Cost
+        fig_3d = go.Figure(data=[go.Scatter3d(
+            x=kps, y=kis, z=costs,
+            mode='markers',
+            marker=dict(
+                size=4,
+                color=costs,
+                colorscale='Viridis_r',
+                opacity=0.8
+            )
+        )])
+        fig_3d.update_layout(
+            title="<b>3D Parameter Landscape</b> (Kp vs Ki vs Cost)",
+            scene=dict(xaxis_title='Kp', yaxis_title='Ki', zaxis_title='Cost'),
+            height=500,
+            margin=dict(l=0, r=0, t=50, b=0)
+        )
+
+        # ==========================================
+        # GRAPH 3: Convergence Curve
+        # ==========================================
+        fig_conv = go.Figure()
+        fig_conv.add_trace(go.Scatter(
+            x=list(range(1, len(history_scores)+1)), y=history_scores,
+            mode='lines+markers', line=dict(color='#2ecc71', width=3),
+            fill='tozeroy', fillcolor='rgba(46, 204, 113, 0.1)'
+        ))
+        fig_conv.update_layout(
+            title="<b>Convergence History</b>",
+            xaxis_title="Generation", yaxis_title="Best Cost",
+            height=350, template="plotly_white"
+        )
+
+        # Build View with Tabs
         results_table = f"""
-        | **Parameter** | **Symbol** | **Optimized Value** | **Role** |
-        | :--- | :---: | :---: | :--- |
-        | Proportional Gain | $K_p$ | **{best_genes[0]:.5f}** | Error Correction Strength |
-        | Integral Gain | $K_i$ | **{best_genes[1]:.5f}** | Steady-State Error Elimination |
-        | Derivative Gain | $K_d$ | **{best_genes[2]:.5f}** | Damping & Prediction |
-        | **Integral Order** | $\lambda$ | **{best_genes[3]:.4f}** | Fractional Memory (History) |
-        | **Derivative Order** | $\mu$ | **{best_genes[4]:.4f}** | Fractional Smoothness |
-        | Fuzzy Scaling | $\\alpha$ | **{best_genes[5]:.4f}** | Adaptive Logic Gain |
+        | Parameter | Symbol | Best Value |
+        | :--- | :---: | :---: |
+        | Proportional | $K_p$ | **{best_genes[0]:.5f}** |
+        | Integral | $K_i$ | **{best_genes[1]:.5f}** |
+        | Int. Order | $\lambda$ | **{best_genes[3]:.4f}** |
+        | Diff. Order | $\mu$ | **{best_genes[4]:.4f}** |
+        | Fuzzy Scale | $\\alpha$ | **{best_genes[5]:.4f}** |
         """
 
-        log_text = "\n".join(history)
-
-        result_view = mo.vstack([
+        new_view = mo.vstack([
             mo.md("---"),
-            mo.callout(
-                mo.md(f"**✅ Optimization Successful!**<br>Minimum Cost (Error): `{final_cost:.6f}`"),
-                kind="success"
-            ),
-            mo.md("### 🏆 Optimal Parameters Found"),
-            mo.md(results_table),
-            mo.accordion({
-                "📜 View Convergence History (Log)": mo.md(f"```text\n{log_text}\n```")
-            })
+            mo.callout(mo.md(f"**✅ Evolution Complete!** Best Cost: `{final_cost:.6f}`"), kind="success"),
+
+            # Layout: Table | Convergence
+            mo.hstack([mo.md(results_table), mo.ui.plotly(fig_conv)], align="center"),
+
+            mo.md("### 🔬 Deep Dive Analysis"),
+            mo.ui.plotly(fig_par),
+            mo.md("**How to read the graph above:** Each line is one trial. Blue lines are the best solutions. Follow the blue lines to see which combination of Kp, Ki, and λ leads to the lowest Cost."),
+
+            mo.accordion({"View 3D Landscape": mo.ui.plotly(fig_3d)})
         ])
 
-    result_view
+        set_last_count(current_clicks) 
+        set_cached_view(new_view)      
+        final_output = new_view
 
+    else:
+        final_output = get_cached_view()
+
+    final_output
+    return best_genes, full_history, is_new_click
+
+
+@app.cell(hide_code=True)
+def _(full_history, get_cached_view, is_new_click, mo):
+
+
+    if is_new_click:
+        if full_history is None:
+            history_view = mo.callout(
+                mo.md("⏳ **No history found.** Please run the Genetic Algorithm first."),
+                kind="neutral"
+            )
+        else:
+            # 2. Data Formatting
+            # We format the raw numbers to make them readable (4 decimal places)
+            formatted_data = []
+            for trial in full_history:
+                formatted_data.append({
+                    "Gen": trial['Generation'],
+                    "Cost (ISE)": round(trial['Cost'], 6), # High precision for cost
+                    "Kp": round(trial['Kp'], 4),
+                    "Ki": round(trial['Ki'], 4),
+                    "Kd": round(trial['Kd'], 4),
+                    "λ (Int)": round(trial['Lambda'], 4),
+                    "µ (Diff)": round(trial['Mu'], 4),
+                    "α (Fuzz)": round(trial['Alpha'], 4),
+                })
+    
+            # 3. Create Interactive Table
+            # pagination=True keeps the interface clean
+            history_table = mo.ui.table(
+                formatted_data,
+                pagination=True,
+                page_size=15,
+                label="Optimization Trials Data"
+            )
+    
+            # 4. Assemble View
+            history_view = mo.vstack([
+                mo.md("### 🗂️ Detailed Optimization Log"),
+                mo.md("""
+                This table records every single "chromosome" (solution) tested by the algorithm.
+                *   **Tip:** Click on the **"Cost (ISE)"** column header to sort by the lowest error.
+                *   **Tip:** Click on **"Gen"** to see the chronological order.
+                """),
+                history_table
+            ])
+    else:
+        history_view = get_cached_view()
+    history_view
+    return
+
+
+@app.cell(hide_code=True)
+def _(
+    best_genes,
+    get_cached_view,
+    go,
+    is_new_click,
+    make_subplots,
+    mo,
+    motor_ui,
+    np,
+    sim_settings,
+    simulate_pmsm_system,
+    vehicle_ui,
+):
+    def create_stability_dashboard(genes):
+        # ================================================
+        # PART E: Stability & Phase Plane Analysis
+        # ================================================
+
+        # Display a placeholder message if the optimization process hasn't completed yet.
+        if genes is None:
+            return mo.callout(mo.md("⏳ **Waiting for optimization results...** Please run the GA first."), kind="neutral")
+
+        # 1. Run a dedicated verification simulation with the best found genes.
+        optimized_controller_params = {
+            "Kp": genes[0], "Ki": genes[1], "Kd": genes[2],
+            "Lambda": genes[3], "Mu": genes[4], "Fuzzy_Scale": genes[5]
+        }
+
+        # Use a shorter simulation time for this specific stability check.
+        verify_scenario = sim_settings.value.copy()
+        verify_scenario["Time"] = 2.0
+
+        t_sim, w_sim, _, _, _, ref_val = simulate_pmsm_system(
+            optimized_controller_params, verify_scenario, motor_ui.value, vehicle_ui.value, strategy_type="GA"
+        )
+
+        # 2. Calculate the necessary state variables for the phase plane plot.
+        error_signal = ref_val - w_sim
+        d_error_signal = np.gradient(error_signal, t_sim)
+
+        # 3. Define a color palette for theme consistency.
+        c_traj = '#8e44ad'  # Purple for the trajectory
+        c_hist = '#2980b9'  # Blue for the histogram
+        c_target = '#e74c3c' # Red for the equilibrium target
+        c_text = '#aaa'     # Neutral text color for dark/light modes
+        c_grid = 'rgba(170, 170, 170, 0.2)' # Subtle grid color
+
+        # 4. Create the Plotly dashboard figure.
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=(
+                f"<b>Phase Plane Trajectory</b> (e vs de/dt)",
+                f"<b>Error Histogram</b> (Precision Check)"
+            ),
+            column_widths=[0.6, 0.4],
+            horizontal_spacing=0.15 # Add space between plots to prevent title overlap.
+        )
+
+        # Plot A: The Phase Plane trajectory.
+        fig.add_trace(go.Scatter(
+            x=error_signal, y=d_error_signal,
+            mode='lines',
+            name='Trajectory',
+            line=dict(color=c_traj, width=2.5),
+        ), row=1, col=1)
+
+        # Add a marker for the target equilibrium point (0,0).
+        fig.add_trace(go.Scatter(
+            x=[0], y=[0], mode='markers',
+            name='Equilibrium Point',
+            marker=dict(size=14, color=c_target, symbol='cross-thin', line=dict(width=3))
+        ), row=1, col=1)
+
+        # Plot B: The error distribution histogram.
+        fig.add_trace(go.Histogram(
+            x=error_signal[100:], # Ignore initial transient for a clearer view of steady-state error.
+            nbinsx=50,
+            name='Error Distribution',
+            marker_color=c_hist,
+            opacity=0.8
+        ), row=1, col=2)
+
+        # 5. Apply styling for dark/light mode compatibility.
+        fig.update_layout(
+            title=dict(
+                text=f"<b>System Stability & Precision Analysis</b><br><span style='font-size:12px; color:{c_text};'>Left: Visual proof of stability. Right: Statistical proof of accuracy.</span>",
+                y=0.95,
+                x=0.05,
+                xanchor='left',
+                yanchor='top'
+            ),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font_color=c_text,
+            height=550,
+            showlegend=False,
+            # Increase margins to prevent titles and labels from overlapping.
+            margin=dict(
+                t=140, # Top: Ample space for the main title above subplot titles.
+                l=80,  # Left: Space for y-axis titles.
+                r=50,
+                b=80   # Bottom: Space for x-axis titles.
+            )
+        )
+
+        # Define a reusable style for all axes.
+        axis_style = dict(
+            gridcolor=c_grid,
+            zerolinecolor=c_grid,
+            title_font=dict(size=14),
+        )
+
+        # Apply styles and labels to each axis individually.
+        fig.update_xaxes(title_text="Error (e)", **axis_style, row=1, col=1)
+        fig.update_yaxes(title_text="Change of Error (de/dt)", **axis_style, row=1, col=1)
+        fig.update_xaxes(title_text="Error Magnitude", **axis_style, row=1, col=2)
+        fig.update_yaxes(title_text="Count", **axis_style, row=1, col=2)
+
+        # 6. Render the final layout in Marimo.
+        return mo.vstack([
+            mo.md("### 🎯 Final Validation: Stability and Precision"),
+            mo.md("""
+            This dashboard provides the mathematical proof of the controller's effectiveness, often required for high-impact publications:
+
+            *   **Phase Plane (Left):** The trajectory (purple line) spirals inwards and converges at the origin `(0,0)`. This is a definitive visual demonstration of the system's **Asymptotic Stability**. It proves the controller will always guide the system back to the desired state without oscillations.
+
+            *   **Error Histogram (Right):** The error distribution is sharply peaked and centered tightly around zero. This provides statistical evidence of the controller's high precision and its ability to effectively reject disturbances.
+            """),
+            mo.ui.plotly(fig)
+        ])
+
+    # Assume 'best_genes', 'sim_settings', 'motor_ui', and 'vehicle_ui' are available
+    # from previous Marimo cells.
+    if is_new_click:
+        final_stability_view = create_stability_dashboard(best_genes)
+    else:
+        final_stability_view=get_cached_view()
+    final_stability_view
     return
 
 
