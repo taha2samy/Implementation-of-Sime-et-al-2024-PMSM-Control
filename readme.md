@@ -111,8 +111,8 @@ This project is designed to be run within a Dev Container for a seamless and rep
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY_NAME.git
-    cd YOUR_REPOSITORY_NAME
+    git clone https://github.com/taha2samy/Implementation-of-Sime-et-al-2024-PMSM-Control.git
+    cd Implementation-of-Sime-et-al-2024-PMSM-Control
     ```
 2.  **Open in VS Code:** Open the cloned project folder.
 3.  **Reopen in Container:** A notification will appear in the bottom-right corner. Click on **"Reopen in Container"**.
