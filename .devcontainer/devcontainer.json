@@ -1,28 +1,19 @@
 {
     "name": "PMSM Project Dev Container",
-    // Tells VS Code how to build the container image
     "build": {
         "dockerfile": "Dockerfile",
-        "context": ".." // The context is the project root, one level up from .devcontainer
+        "context": ".."
     },
-    // These commands run ONCE after the container is created for the first time.
-    // This is where we create the venv and install dependencies into it.
-    "postCreateCommand": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
-    // VS Code customizations for this container
+    "postCreateCommand": "pip install --upgrade pip && pip install marimo && pip install -r requirements.txt",
     "customizations": {
         "vscode": {
-            // Automatically install these extensions inside the container
             "extensions": [
-                "ms-python.python", // Core Python support
-                "ms-python.vscode-pylance", // Smart code completion
-                "charliermarsh.ruff" // Modern, fast linter and formatter
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff"
             ],
-            // Automatically apply these settings when you open the project in the container
             "settings": {
-                // --- THIS IS THE KEY PART ---
-                // Tell VS Code's Python extension to automatically find and use our venv
-                "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
-                // Optional: Quality-of-life settings for a better Python experience
+                "python.defaultInterpreterPath": "/usr/local/bin/python3",
                 "terminal.integrated.defaultProfile.linux": "bash",
                 "[python]": {
                     "editor.formatOnSave": true,
@@ -31,6 +22,5 @@
             }
         }
     },
-    // Run the container as the non-root 'vscode' user for better security
     "remoteUser": "vscode"
 }
