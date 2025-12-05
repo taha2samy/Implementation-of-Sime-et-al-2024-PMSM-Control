@@ -35,7 +35,7 @@ The diagram below illustrates the architecture of the proposed GA-AFFFOPID contr
 1.  **Genetic Algorithm (Offline/Background):** Optimizes the *base parameters* of the FOPID controller (`Kp`, `Ki`, `Kd`, `λ`, `μ`).
 2.  **Fuzzy Logic Controller (Online/Real-time):** Takes the real-time `error` and `change in error` to produce an adaptive gain multiplier (`α`) that scales the FOPID gains, allowing the controller to react instantly to disturbances.
 
-![controller](two image copy.png)
+![controller](image2.png)
 
 ```mermaid
 graph TD
