@@ -4,8 +4,8 @@
 [![Python Version](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+<img width="758" height="419" alt="image" src="https://github.com/user-attachments/assets/f39cc2f0-4341-4100-b3a5-8de06f1fc793" />
 
-![Uploading image.png…]()
 
 This repository contains the implementation and simulation of an advanced intelligent control system for a Permanent Magnet Synchronous Motor (PMSM) drive, specifically tailored for Electric Vehicle (EV) applications. The project is developed as an interactive web-based dashboard using **Marimo**.
 
