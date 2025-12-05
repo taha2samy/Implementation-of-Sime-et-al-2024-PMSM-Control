@@ -544,13 +544,12 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
         fuzzy_master_scale = ctrl_params.get("Fuzzy_Scale", 1.0)
 
         # 2. Initialize Controller Components
-        is_fuzzy_mode = (strategy_type == OPT_GA) # True only if the paper's method is selected
+        is_fuzzy_mode = (strategy_type == OPT_GA) 
 
         if is_fuzzy_mode:
-            # Instantiate the two fuzzy controllers ONLY if needed
             flc1_tuner = RealFuzzyController()
             flc2_scaler = FuzzyScalerController()
-
+    
         use_fractional = (strategy_type == OPT_FOPID) or (strategy_type == OPT_GA)
         frac_integrator = OustaloupFilter(-lam) if use_fractional else None
         frac_differentiator = OustaloupFilter(mu) if use_fractional else None
@@ -559,11 +558,10 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
         dt = 0.0001
         steps = int(t_end / dt)
         time = np.linspace(0, t_end, steps)
-
-        # Comprehensive logging arrays
+    
         speed_arr, torque_arr, iq_arr = np.zeros(steps), np.zeros(steps), np.zeros(steps)
         kp_log, ki_log, sf_log = np.zeros(steps), np.zeros(steps), np.zeros(steps)
-
+    
         w_mech, iq_current, error_sum, prev_error = 0.0, 0.0, 0.0, 0.0
 
         # 4. Main Simulation Loop
@@ -574,38 +572,40 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
             delta_error = (error - prev_error) / dt if dt > 0 else 0.0
 
             # --- Block A: SWITCH LOGIC & GAIN DETERMINATION ---
-            # Initialize variables for the current time step
             final_kp = 0.0
             final_ki = 0.0
-            final_kd = kd # Kd is constant across modes in this design
-            current_sf = 1.0 # Default scaling factor is 1.0
+            final_kd = 0.0 # Default initialization
+            current_sf = 1.0
 
             if is_fuzzy_mode and abs(error) > error_threshold:
-                # --- Activate AFFOPID System (Large Error) ---
+                # --- TRANSIENT STATE (High Error) ---
+                # Use Intelligent Control (AFFOPID)
                 base_kp, base_ki = flc1_tuner.compute_base_gains(error, delta_error)
                 raw_scaling_factor = flc2_scaler.compute_scaling_factor(error, delta_error)
                 current_sf = raw_scaling_factor * fuzzy_master_scale
-
+            
                 final_kp = base_kp * current_sf
                 final_ki = base_ki * current_sf
-
+                final_kd = kd # Use the optimized Kd during transient
+        
             else:
-                # --- Activate Fixed-Gain System (Small Error or Non-Fuzzy Mode) ---
+                # --- STEADY STATE (Low Error) ---
                 if strategy_type == OPT_GA:
-                    # Use the 'fixed' gains for steady-state in GA mode
+                    # *** CRITICAL FIX HERE ***
+                    # Use Fixed Gains and DISABLE Derivative term to stop oscillations
                     final_kp = kp_fixed
                     final_ki = ki_fixed
+                    final_kd = 0.0 # Force Kd to 0 in steady state for smooth response
                 else:
-                    # For standard PID/FOPID, use the gains from the 'vault'
+                    # Standard PID/FOPID behavior
                     final_kp = ctrl_params["Kp"]
                     final_ki = ctrl_params["Ki"]
-
-            # --- Logging Block ---
-            # Log the final, active gains and scaling factor for this time step
+                    final_kd = ctrl_params["Kd"]
+        
+            # --- Logging ---
             kp_log[i] = final_kp
             ki_log[i] = final_ki
             sf_log[i] = current_sf
-            # --- End of Logging Block ---
 
             # --- Block B: Core Controller Logic ---
             p_term = final_kp * error
@@ -615,7 +615,7 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
                 d_signal = frac_differentiator.compute(error)
                 i_term = final_ki * i_signal
                 d_term = final_kd * d_signal
-            else: # Standard PID logic
+            else: 
                 error_sum += error * dt
                 i_term = final_ki * error_sum
                 d_term = final_kd * delta_error
@@ -630,7 +630,7 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
                 iq_ref = -200
                 if not use_fractional: error_sum -= error * dt
 
-            # --- Block C: Plant Model (System Physics) ---
+            # --- Block C: Plant Model ---
             iq_current += (iq_ref - iq_current) * (dt / 0.001)
             Te = 1.5 * P * Psi_m * iq_current
             T_ext = load_val if t >= t_load else 0.0
@@ -647,7 +647,6 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
             iq_arr[i] = iq_current
             prev_error = error
 
-        # 5. Return all logs for analysis
         return time, speed_arr, torque_arr, iq_arr, kp_log, ki_log, sf_log, ref
     return (simulate_pmsm_system,)
 
