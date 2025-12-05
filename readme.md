@@ -1,10 +1,4 @@
-Of course. Here is a complete, professional `README.md` file in English, crafted specifically for your project. It includes a detailed Mermaid diagram of the controller architecture as requested.
 
----
-
-### Create a file named `README.md` in the root of your project and paste the following content into it:
-
-```markdown
 # Marimo Dashboard for a GA-Tuned Adaptive Fuzzy Fractional Order PID Controller
 
 [![Python Version](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -22,7 +16,7 @@ image.png
 
 ## 📸 Dashboard Demo
 
-*(This is an ideal place to add a GIF or a high-quality screenshot of your dashboard)*
+
 
 ![Dashboard Screenshot](image.png)
 
@@ -40,6 +34,8 @@ image.png
 The diagram below illustrates the architecture of the proposed GA-AFFFOPID controller. The system features two layers of intelligence:
 1.  **Genetic Algorithm (Offline/Background):** Optimizes the *base parameters* of the FOPID controller (`Kp`, `Ki`, `Kd`, `λ`, `μ`).
 2.  **Fuzzy Logic Controller (Online/Real-time):** Takes the real-time `error` and `change in error` to produce an adaptive gain multiplier (`α`) that scales the FOPID gains, allowing the controller to react instantly to disturbances.
+
+![controller](two image copy.png)
 
 ```mermaid
 graph TD
