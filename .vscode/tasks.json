@@ -22,7 +22,7 @@
         {
             "label": "🚀 2. Run: Marimo App (App Mode)",
             "type": "shell",
-            "command": "python3 run pmsm_project.py",
+            "command": "marimo run pmsm_project.py",
             "detail": "Runs the Marimo app in read-only application mode.",
             "group": {
                 "kind": "test",
