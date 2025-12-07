@@ -135,17 +135,17 @@ def _(mo):
         OPT_FOPID: mo.ui.dictionary({
             "Kp": mo.ui.number(0.0, 500.0, 0.000001, 5.0, label=r"Proportional ($K_p$)", full_width=True),
             "Ki": mo.ui.number(0.0, 500.0, 0.000001, 10.0, label=r"Integral ($K_i$)", full_width=True),
-            "Kd": mo.ui.number(0.0, 100.0, 0.000001, 0.01, label=r"Derivative ($K_d$)", full_width=True),
-            "Lambda": mo.ui.number(0.01, 2.0, 0.000001, 0.9, label=r"Int. Order ($\lambda$)", full_width=True),
-            "Mu": mo.ui.number(0.01, 2.0, 0.000001, 0.8, label=r"Diff. Order ($\mu$)", full_width=True),
+            "Kd": mo.ui.number(0.0, 500.0, 0.000001, 0.01, label=r"Derivative ($K_d$)", full_width=True),
+            "Lambda": mo.ui.number(0.01, 5, 0.000001, 0.9, label=r"Int. Order ($\lambda$)", full_width=True),
+            "Mu": mo.ui.number(0.01, 5, 0.000001, 0.8, label=r"Diff. Order ($\mu$)", full_width=True),
         }),
         OPT_GA: mo.ui.dictionary({
             # These sliders now primarily define the GA's search space bounds, not direct simulation values.
             "Kp": mo.ui.number(0.0, 500.0, 0.000001, 5.0, label=r"GA Kp (Search Space)", full_width=True),
             "Ki": mo.ui.number(0.0, 500.0, 0.000001, 10.0, label=r"GA Ki (Search Space)", full_width=True),
-            "Kd": mo.ui.number(0.0, 100.0, 0.000001, 0.01, label=r"GA Kd (Search Space)", full_width=True),
-            "Lambda": mo.ui.number(0.01, 2.0, 0.000001, 0.978, label=r"GA Lambda (Search Space)", full_width=True),
-            "Mu": mo.ui.number(0.01, 2.0, 0.000001, 0.862, label=r"GA Mu (Search Space)", full_width=True),
+            "Kd": mo.ui.number(0.0, 500.0, 0.000001, 0.01, label=r"GA Kd (Search Space)", full_width=True),
+            "Lambda": mo.ui.number(0.01, 5, 0.000001, 0.978, label=r"GA Lambda (Search Space)", full_width=True),
+            "Mu": mo.ui.number(0.01, 5, 0.000001, 0.862, label=r"GA Mu (Search Space)", full_width=True),
             "Fuzzy_Scale": mo.ui.number(0.1, 10.0, 0.000001, 1.0, label=r"GA Fuzzy Scale (Search Space)", full_width=True),
         })
     }
@@ -157,7 +157,7 @@ def _(mo):
         "Kp_fixed": mo.ui.number(0.00001, 500.0, 0.000001, 50.0, label=r"Fixed Kp (Steady-State)", full_width=True),
         "Ki_fixed": mo.ui.number(0.00001, 500.0, 0.000001, 100.0, label=r"Fixed Ki (Steady-State)", full_width=True),
         # The Kd can be shared, so we don't need a separate fixed Kd unless specified.
-        "Threshold": mo.ui.number(0.1, 10.0, 0.000001, 0.5, label=r"Switching Threshold |E|", full_width=True)
+        "Threshold": mo.ui.number(0.1, 100.0, 0.000001, 0.5, label=r"Switching Threshold |E|", full_width=True)
     })
     return OPT_FOPID, OPT_GA, OPT_PID, switch_and_fopid_params, vault
 
@@ -247,123 +247,6 @@ def _(mo):
 
         This is the main control station for the PMSM drive system. Use the **sidebar (⚙️)** to configure the controller architecture, tuning parameters, and simulation scenario. The results will be updated in real-time below, providing a comprehensive analysis of the system's dynamic performance and stability.
     """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(go, make_subplots, mo, np):
-    # --- 1. Parameters & Setup ---
-    # This cell isolates and validates the core mathematical component of our FOPID controller:
-    # the fractional-order operator, s^α. We test a specific order here.
-    test_order = 0.5
-    filter_instance = OustaloupFilter(test_order, freq_low=0.01, freq_high=100.0)
-
-    # --- 2. Frequency Domain Analysis (Bode Plot) ---
-    # We calculate the theoretical frequency response of the Oustaloup approximation.
-    freqs = np.logspace(-3, 3, 500)
-    magnitudes = []
-    phases = []
-
-    for w in freqs:
-        s = 1j * w
-        h_s = filter_instance.gain
-        # Re-calculate the continuous-time transfer function for plotting
-        wb, wh, N = 0.01, 100.0, 3 
-        for k in range(-N, N + 1):
-            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - test_order))/(2*N + 1))
-            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + test_order))/(2*N + 1))
-            h_s *= (s + w_z) / (s + w_p)
-        magnitudes.append(20 * np.log10(np.abs(h_s)))
-        phases.append(np.angle(h_s, deg=True))
-
-    # --- 3. Time Domain Analysis (Step Response) ---
-    # We simulate the discrete-time filter's response to a sudden input.
-    time_sim = OustaloupFilter(test_order)
-    t_vec = np.linspace(0, 10, 1000)
-    input_step = np.ones_like(t_vec)
-    output_response = [time_sim.compute(val) for val in input_step]
-
-    # --- 4. Plotting & Visualization ---
-    # Define a theme-friendly color palette
-    c_mag = '#00d2ff'   # Cyan
-    c_phase = '#e74c3c' # Red
-    c_resp = '#54a0ff'  # Blue
-    c_text = '#aaa'     # Neutral Gray
-    c_grid = 'rgba(170, 170, 170, 0.2)'
-
-    # Create the figure with a secondary y-axis for the Bode plot
-    fig_filter = make_subplots(
-        rows=1, cols=2,
-        subplot_titles=(
-            f"<b style='color:{c_mag}'>Bode Plot (Frequency Domain)</b>",
-            f"<b style='color:{c_resp}'>Step Response (Time Domain)</b>"
-        ),
-        horizontal_spacing=0.15,
-        specs=[[{"secondary_y": True}, {}]]
-    )
-
-    # Plot 1a: Magnitude
-    fig_filter.add_trace(go.Scatter(x=freqs, y=magnitudes, name="Magnitude (dB)", line=dict(color=c_mag, width=2.5)), row=1, col=1, secondary_y=False)
-
-    # Plot 1b: Phase
-    fig_filter.add_trace(go.Scatter(x=freqs, y=phases, name="Phase (Deg)", line=dict(color=c_phase, width=2.5)), row=1, col=1, secondary_y=True)
-
-    # Plot 2a: Step Response
-    fig_filter.add_trace(go.Scatter(x=t_vec, y=output_response, name=f"Response of s<sup>{test_order}</sup>", line=dict(color=c_resp, width=2.5)), row=1, col=2)
-
-    # Plot 2b: Input Step Reference
-    fig_filter.add_trace(go.Scatter(x=t_vec, y=input_step, name="Input Step", line=dict(color=c_text, dash='dash', width=1.5), opacity=0.7), row=1, col=2)
-
-    # --- 5. Professional Styling ---
-    base_axis_style = dict(showgrid=True, gridcolor=c_grid, zerolinecolor=c_grid, tickfont=dict(color=c_text))
-    fig_filter.update_layout(
-        title=dict(
-            text=f"<b>Analysis of the Fractional Operator s<sup>{test_order}</sup> (Oustaloup Method)</b>",
-            y=0.92, x=0.5, xanchor='center', yanchor='top'
-        ),
-        height=450,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color=c_text),
-        hovermode="x unified",
-        margin=dict(t=100, l=80, r=80, b=50),
-        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
-        # Axis styling
-        xaxis=dict(type="log", title="Frequency (rad/s)", **base_axis_style),
-        yaxis=dict(title="Magnitude (dB)", title_font=dict(color=c_mag), **base_axis_style),
-        yaxis2=dict(title="Phase (Deg)", title_font=dict(color=c_phase), range=[0, 90], showgrid=False, tickfont=dict(color=c_phase)),
-        xaxis2=dict(title="Time (s)", **base_axis_style),
-        yaxis3=dict(title="Amplitude", **base_axis_style)
-    )
-
-    # Add a horizontal line for the theoretical target phase
-    theoretical_phase = test_order * 90
-    fig_filter.add_hline(
-        y=theoretical_phase, line_dash="dot", line_color=c_phase,
-        annotation_text=f"Theoretical Target: {theoretical_phase}°",
-        annotation_font=dict(color=c_phase),
-        annotation_position="bottom right",
-        row=1, col=1, secondary_y=True
-    )
-
-    # --- 6. Final Output: Explanation and Plot ---
-    # This is the most important part: explaining the "why"
-    mo.vstack([
-        mo.md(
-            """
-            ### 📉 Verifying the Core Component: The Fractional Operator
-
-            **Why is this analysis here?** Our main controller is a *Fractional Order* PID (FOPID), which uses the non-standard mathematical operators `s^λ` and `s^μ`. Before we can trust our complex controller, we must first prove that our implementation of this core component—the `OustaloupFilter` class—is mathematically correct.
-
-            This cell isolates a single fractional operator, **s<sup>{test_order}</sup>**, and validates its behavior:
-
-            1.  **Bode Plot (Left):** The key property of a fractional operator is its **constant phase shift**. For an order of `{test_order}`, the theoretical phase shift is `{test_order} * 90° = {theoretical_phase}°`. As you can see, the red line holds steady at this target across a wide frequency range, **validating our implementation**.
-        
-            2.  **Step Response (Right):** This plot visualizes the operator's unique behavior in the time domain. It is neither a perfect integrator (which would be a straight ramp) nor a simple derivative, but something in between. This demonstrates the unique "memory" property of fractional calculus.
-            """
-        ),
-        mo.ui.plotly(fig_filter)
-    ])
     return
 
 
@@ -485,54 +368,187 @@ class OustaloupFilter:
         return current_signal
 
 
-@app.cell
-def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
-    # The cell starts here
+@app.cell(hide_code=True)
+def _(go, make_subplots, mo, np):
+    # --- 1. Parameters & Setup ---
+    # This cell isolates and validates the core mathematical component of our FOPID controller:
+    # the fractional-order operator, s^α. We test a specific order here.
+    test_order = 0.5
+    filter_instance = OustaloupFilter(test_order, freq_low=0.01, freq_high=100.0)
 
-    def simulate_pmsm_system(ctrl_params, scenario, motor_phys, vehicle_phys, switch_and_fopid_params, strategy_type):
+    # --- 2. Frequency Domain Analysis (Bode Plot) ---
+    # We calculate the theoretical frequency response of the Oustaloup approximation.
+    freqs = np.logspace(-3, 3, 500)
+    magnitudes = []
+    phases = []
+
+    for w in freqs:
+        s = 1j * w
+        h_s = filter_instance.gain
+        # Re-calculate the continuous-time transfer function for plotting
+        wb, wh, N = 0.01, 100.0, 3 
+        for k in range(-N, N + 1):
+            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - test_order))/(2*N + 1))
+            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + test_order))/(2*N + 1))
+            h_s *= (s + w_z) / (s + w_p)
+        magnitudes.append(20 * np.log10(np.abs(h_s)))
+        phases.append(np.angle(h_s, deg=True))
+
+    # --- 3. Time Domain Analysis (Step Response) ---
+    # We simulate the discrete-time filter's response to a sudden input.
+    time_sim = OustaloupFilter(test_order)
+    t_vec = np.linspace(0, 10, 1000)
+    input_step = np.ones_like(t_vec)
+    output_response = [time_sim.compute(val) for val in input_step]
+
+    # --- 4. Plotting & Visualization ---
+    # Define a theme-friendly color palette
+    c_mag = '#00d2ff'   # Cyan
+    c_phase = '#e74c3c' # Red
+    c_resp = '#54a0ff'  # Blue
+    c_text = '#aaa'     # Neutral Gray
+    c_grid = 'rgba(170, 170, 170, 0.2)'
+
+    # Create the figure with a secondary y-axis for the Bode plot
+    fig_filter = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=(
+            f"<b style='color:{c_mag}'>Bode Plot (Frequency Domain)</b>",
+            f"<b style='color:{c_resp}'>Step Response (Time Domain)</b>"
+        ),
+        horizontal_spacing=0.15,
+        specs=[[{"secondary_y": True}, {}]]
+    )
+
+    # Plot 1a: Magnitude
+    fig_filter.add_trace(go.Scatter(x=freqs, y=magnitudes, name="Magnitude (dB)", line=dict(color=c_mag, width=2.5)), row=1, col=1, secondary_y=False)
+
+    # Plot 1b: Phase
+    fig_filter.add_trace(go.Scatter(x=freqs, y=phases, name="Phase (Deg)", line=dict(color=c_phase, width=2.5)), row=1, col=1, secondary_y=True)
+
+    # Plot 2a: Step Response
+    fig_filter.add_trace(go.Scatter(x=t_vec, y=output_response, name=f"Response of s<sup>{test_order}</sup>", line=dict(color=c_resp, width=2.5)), row=1, col=2)
+
+    # Plot 2b: Input Step Reference
+    fig_filter.add_trace(go.Scatter(x=t_vec, y=input_step, name="Input Step", line=dict(color=c_text, dash='dash', width=1.5), opacity=0.7), row=1, col=2)
+
+    # --- 5. Professional Styling ---
+    base_axis_style = dict(showgrid=True, gridcolor=c_grid, zerolinecolor=c_grid, tickfont=dict(color=c_text))
+    fig_filter.update_layout(
+        title=dict(
+            text=f"<b>Analysis of the Fractional Operator s<sup>{test_order}</sup> (Oustaloup Method)</b>",
+            y=0.92, x=0.5, xanchor='center', yanchor='top'
+        ),
+        height=450,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color=c_text),
+        hovermode="x unified",
+        margin=dict(t=100, l=80, r=80, b=50),
+        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
+        # Axis styling
+        xaxis=dict(type="log", title="Frequency (rad/s)", **base_axis_style),
+        yaxis=dict(title="Magnitude (dB)", title_font=dict(color=c_mag), **base_axis_style),
+        yaxis2=dict(title="Phase (Deg)", title_font=dict(color=c_phase), range=[0, 90], showgrid=False, tickfont=dict(color=c_phase)),
+        xaxis2=dict(title="Time (s)", **base_axis_style),
+        yaxis3=dict(title="Amplitude", **base_axis_style)
+    )
+
+    # Add a horizontal line for the theoretical target phase
+    theoretical_phase = test_order * 90
+    fig_filter.add_hline(
+        y=theoretical_phase, line_dash="dot", line_color=c_phase,
+        annotation_text=f"Theoretical Target: {theoretical_phase}°",
+        annotation_font=dict(color=c_phase),
+        annotation_position="bottom right",
+        row=1, col=1, secondary_y=True
+    )
+
+    # --- 6. Final Output: Explanation and Plot ---
+    # This is the most important part: explaining the "why"
+    mo.vstack([
+        mo.md(
+            """
+            ### 📉 Verifying the Core Component: The Fractional Operator
+
+            **Why is this analysis here?** Our main controller is a *Fractional Order* PID (FOPID), which uses the non-standard mathematical operators `s^λ` and `s^μ`. Before we can trust our complex controller, we must first prove that our implementation of this core component—the `OustaloupFilter` class—is mathematically correct.
+
+            This cell isolates a single fractional operator, **s<sup>{test_order}</sup>**, and validates its behavior:
+
+            1.  **Bode Plot (Left):** The key property of a fractional operator is its **constant phase shift**. For an order of `{test_order}`, the theoretical phase shift is `{test_order} * 90° = {theoretical_phase}°`. As you can see, the red line holds steady at this target across a wide frequency range, **validating our implementation**.
+
+            2.  **Step Response (Right):** This plot visualizes the operator's unique behavior in the time domain. It is neither a perfect integrator (which would be a straight ramp) nor a simple derivative, but something in between. This demonstrates the unique "memory" property of fractional calculus.
+            """
+        ),
+        mo.ui.plotly(fig_filter)
+    ])
+    return
+
+
+@app.cell
+def _(FuzzyGainTuner, OPT_FOPID, OPT_GA, np):
+    def simulate_pmsm_system(ctrl_params, scenario, motor_phys, vehicle_phys, switch_params, strategy_type):
         """
-        Simulates the PMSM-based EV powertrain.
-        Handles all strategies: PID, FOPID, and the switched AFFOPID-FOPID method.
-        Logs all relevant data for comprehensive analysis.
+        Simulates the PMSM-based EV powertrain with the corrected parameter unpacking.
         """
-        # 1. Unpack Simulation, Physics, and Controller Parameters
+        # --- START OF CORRECTION ---
+        # 1. Unpack all parameters SAFELY by name (key) instead of by order.
+
+        # Scenario parameters
         t_end = scenario["Time"]
         w_target = scenario["Ref"]
         t_load = scenario["T_load"]
         load_val = scenario["Load"]
 
-        Rs, P, Psi_m, J, B = motor_phys["Rs"], motor_phys["P"], motor_phys["Psi"], motor_phys["J"], motor_phys["B"]
-        Mass, Rw, Gear, Cd, Area, Rho = vehicle_phys["Mass"], vehicle_phys["Rw"], vehicle_phys["Gear"], vehicle_phys["Cd"], vehicle_phys["Area"], vehicle_phys["Rho"]
+        # Motor physical parameters
+        Rs = motor_phys["Rs"]
+        P = motor_phys["P"]
+        Psi_m = motor_phys["Psi"]
+        J = motor_phys["J"]
+        B = motor_phys["B"]
+        # Ld and Lq are not used in this simplified model, but it's good practice to acknowledge them.
 
-        # Unpack parameters for the switch and the fixed FOPID mode
-        kp_fixed = switch_and_fopid_params["Kp_fixed"]
-        ki_fixed = switch_and_fopid_params["Ki_fixed"]
-        error_threshold = switch_and_fopid_params["Threshold"]
+        # Vehicle physical parameters
+        Mass = vehicle_phys["Mass"]
+        Rw = vehicle_phys["Rw"]
+        Gear = vehicle_phys["Gear"]
+        Cd = vehicle_phys["Cd"]
+        Area = vehicle_phys["Area"]
+        Rho = vehicle_phys["Rho"]
+        # Cr (Rolling Resistance) is used in the vehicle dynamics calculation.
 
-        # Unpack general controller parameters
+        # Advanced controller parameters
+        kp_steady = switch_params["Kp_fixed"]
+        ki_steady = switch_params["Ki_fixed"]
+        error_threshold = switch_params["Threshold"]
+
+        # Base gains for the transient AFFOPID mode
+        kp_base = ctrl_params.get("Kp", 0.0)
+        ki_base = ctrl_params.get("Ki", 0.0)
+
+        # General controller parameters
         kd = ctrl_params.get("Kd", 0.0)
         lam = ctrl_params.get("Lambda", 1.0)
         mu = ctrl_params.get("Mu", 1.0)
-        fuzzy_master_scale = ctrl_params.get("Fuzzy_Scale", 1.0)
+        # --- END OF CORRECTION ---
 
         # 2. Initialize Controller Components
-        is_fuzzy_mode = (strategy_type == OPT_GA) 
-
-        if is_fuzzy_mode:
-            flc1_tuner = RealFuzzyController()
-            flc2_scaler = FuzzyScalerController()
+        is_advanced_mode = (strategy_type == OPT_GA)
+        if is_advanced_mode:
+            fuzzy_tuner = FuzzyGainTuner()
 
         use_fractional = (strategy_type == OPT_FOPID) or (strategy_type == OPT_GA)
         frac_integrator = OustaloupFilter(-lam) if use_fractional else None
         frac_differentiator = OustaloupFilter(mu) if use_fractional else None
 
-        # 3. Initialize Simulation State and Logging Variables
+        # 3. Initialize Simulation State & Data Loggers
         dt = 0.0001
         steps = int(t_end / dt)
         time = np.linspace(0, t_end, steps)
 
         speed_arr, torque_arr, iq_arr = np.zeros(steps), np.zeros(steps), np.zeros(steps)
-        kp_log, ki_log, sf_log = np.zeros(steps), np.zeros(steps), np.zeros(steps)
+        kp_log, ki_log = np.zeros(steps), np.zeros(steps) 
+        u1_log, u2_log = np.zeros(steps), np.zeros(steps)
 
         w_mech, iq_current, error_sum, prev_error = 0.0, 0.0, 0.0, 0.0
 
@@ -543,51 +559,37 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
             error = ref - w_mech
             delta_error = (error - prev_error) / dt if dt > 0 else 0.0
 
-            # --- Block A: SWITCH LOGIC & GAIN DETERMINATION ---
-            final_kp = 0.0
-            final_ki = 0.0
-            final_kd = 0.0 # Default initialization
-            current_sf = 1.0
+            # Block A: Gain Calculation with Switching Logic
+            final_kp, final_ki, final_kd = 0.0, 0.0, 0.0
+            u1, u2 = 1.0, 1.0
 
-            if is_fuzzy_mode and abs(error) > error_threshold:
-                # --- TRANSIENT STATE (High Error) ---
-                # Use Intelligent Control (AFFOPID)
-                base_kp, base_ki = flc1_tuner.compute_base_gains(error, delta_error)
-                raw_scaling_factor = flc2_scaler.compute_scaling_factor(error, delta_error)
-                current_sf = raw_scaling_factor * fuzzy_master_scale
-
-                final_kp = base_kp * current_sf
-                final_ki = base_ki * current_sf
-                final_kd = kd # Use the optimized Kd during transient
-
+            if is_advanced_mode and abs(error) > error_threshold:
+                # Transient State: Use Adaptive Fuzzy Control
+                u1, u2 = fuzzy_tuner.compute_tuning_factors(error, delta_error)
+                final_kp = kp_base * u1
+                final_ki = ki_base * u2
+                final_kd = kd
             else:
-                # --- STEADY STATE (Low Error) ---
-                if strategy_type == OPT_GA:
-                    # *** CRITICAL FIX HERE ***
-                    # Use Fixed Gains and DISABLE Derivative term to stop oscillations
-                    final_kp = kp_fixed
-                    final_ki = ki_fixed
-                    final_kd = 0 # Force Kd to 0 in steady state for smooth response
+                # Steady-State: Use Fixed Gains
+                if is_advanced_mode:
+                    final_kp = kp_steady
+                    final_ki = ki_steady
+                    final_kd = 0
                 else:
-                    # Standard PID/FOPID behavior
                     final_kp = ctrl_params["Kp"]
                     final_ki = ctrl_params["Ki"]
                     final_kd = ctrl_params["Kd"]
 
-            # --- Logging ---
-            kp_log[i] = final_kp
-            ki_log[i] = final_ki
-            sf_log[i] = current_sf
+            # Log gains and fuzzy outputs
+            kp_log[i], ki_log[i] = final_kp, final_ki
+            u1_log[i], u2_log[i] = u1, u2
 
-            # --- Block B: Core Controller Logic ---
+            # Block B: Core Controller Action
             p_term = final_kp * error
-
             if use_fractional:
-                i_signal = frac_integrator.compute(error)
-                d_signal = frac_differentiator.compute(error)
-                i_term = final_ki * i_signal
-                d_term = final_kd * d_signal
-            else: 
+                i_term = final_ki * frac_integrator.compute(error)
+                d_term = final_kd * frac_differentiator.compute(error)
+            else:
                 error_sum += error * dt
                 i_term = final_ki * error_sum
                 d_term = final_kd * delta_error
@@ -595,14 +597,10 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
             iq_ref = p_term + i_term + d_term
 
             # Saturation and Anti-windup
-            if iq_ref > 200:
-                iq_ref = 200
-                if not use_fractional: error_sum -= error * dt
-            elif iq_ref < -200:
-                iq_ref = -200
-                if not use_fractional: error_sum -= error * dt
+            if iq_ref > 200: iq_ref = 200; error_sum -= error * dt
+            elif iq_ref < -200: iq_ref = -200; error_sum -= error * dt
 
-            # --- Block C: Plant Model ---
+            # Block C: Plant Model (Physics)
             iq_current += (iq_ref - iq_current) * (dt / 0.001)
             Te = 1.5 * P * Psi_m * iq_current
             T_ext = load_val if t >= t_load else 0.0
@@ -613,13 +611,11 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
             w_mech += dw_dt * dt
             if w_mech < 0: w_mech = 0
 
-            # Log state variables
-            speed_arr[i] = w_mech
-            torque_arr[i] = Te
-            iq_arr[i] = iq_current
+            # Log system state variables
+            speed_arr[i], torque_arr[i], iq_arr[i] = w_mech, Te, iq_current
             prev_error = error
 
-        return time, speed_arr, torque_arr, iq_arr, kp_log, ki_log, sf_log, ref
+        return time, speed_arr, torque_arr, iq_arr, kp_log, ki_log, u1_log, u2_log, ref
     return (simulate_pmsm_system,)
 
 
@@ -636,81 +632,67 @@ def _(
     switch_and_fopid_params,
     vehicle_ui,
 ):
-    # --- Cell 5: Main Dashboard (Fixed Layout) ---
-
-    # 1. Run Simulation (Global Data)
-    # --- START OF MODIFICATION ---
-    # The function now returns more logs. We need to unpack them into new variables.
-    t_data, w_data, te_data, iq_data, kp_log, ki_log, sf_log, ref_data = simulate_pmsm_system(
+    # 1. Run the simulation and unpack all the returned values.
+    t_data, w_data, te_data, iq_data, kp_log, ki_log, u1_log, u2_log, ref_data = simulate_pmsm_system(
         active_params.value,
         sim_settings.value,
         motor_ui.value,
         vehicle_ui.value,
-        switch_and_fopid_params.value,
+        switch_and_fopid_params.value, # <-- Pass the .value of the imported dictionary
         controller_selector.value
     )
-    # --- END OF MODIFICATION ---
 
-
-    # 2. Define Plotting Function (Encapsulated & Clean) - NO CHANGES HERE
+    # 2. Define the plotting function.
     def generate_dashboard_plot(t_arr, w_arr, te_arr, iq_arr, ref_val, load_config):
         """
-        Plotting function with fixed overlapping titles
+        Creates the main 3-panel performance plot.
         """
-        # Create Local Figure
-        _fig = make_subplots(
+        fig = make_subplots(
             rows=3, cols=1, 
             shared_xaxes=True,
-            vertical_spacing=0.1, # Increased spacing between subplots
-            subplot_titles=("🚀 Speed Response", "⚙️ Torque (Mechanical)", "⚡ Stator Current (Iq)")
+            vertical_spacing=0.1,
+            subplot_titles=("🚀 Speed Response", "⚙️ Electromagnetic Torque", "⚡ q-axis Current (Iq)")
         )
 
-        # A. Speed Trace
-        _fig.add_trace(go.Scatter(x=t_arr, y=w_arr, name="Speed", line=dict(color="#00d2ff", width=3)), row=1, col=1)
-        # Handle Reference
-        # --- Minor fix: ref_data can be a single value, not an array ---
-        ref_val_corrected = ref_val if isinstance(ref_val, (int, float)) else ref_val[0]
-        _ref_line = [ref_val_corrected]*len(t_arr)
-        _fig.add_trace(go.Scatter(x=t_arr, y=_ref_line, name="Target", line=dict(dash="dash", color="#ff4b1f")), row=1, col=1)
+        # Speed Trace
+        fig.add_trace(go.Scatter(x=t_arr, y=w_arr, name="Speed", line=dict(color="#00d2ff", width=3)), row=1, col=1)
 
-        # B. Torque Trace
-        _fig.add_trace(go.Scatter(x=t_arr, y=te_arr, name="Torque", line=dict(color="#00b09b", width=2)), row=2, col=1)
+        # Reference Line
+        ref_value_corrected = ref_val if isinstance(ref_val, (int, float)) else ref_val
+        ref_line = [ref_value_corrected] * len(t_arr)
+        fig.add_trace(go.Scatter(x=t_arr, y=ref_line, name="Target", line=dict(dash="dash", color="#e74c3c", width=2)), row=1, col=1)
 
-        # C. Current Trace
-        _fig.add_trace(go.Scatter(x=t_arr, y=iq_arr, name="Current", line=dict(color="#f7971e", width=2)), row=3, col=1)
+        # Torque Trace
+        fig.add_trace(go.Scatter(x=t_arr, y=te_arr, name="Torque", line=dict(color="#2ecc71", width=2.5)), row=2, col=1)
 
-        # D. Load Marker Logic (Fixed Position)
-        _load_val = load_config["Load"]
-        _load_time = load_config["T_load"]
+        # Current Trace
+        fig.add_trace(go.Scatter(x=t_arr, y=iq_arr, name="Current", line=dict(color="#f1c40f", width=2.5)), row=3, col=1)
 
-        if _load_val > 0.01:
-            # Draw line
-            _fig.add_vline(x=_load_time, line_width=2, line_dash="dot", line_color="#f1c40f", opacity=0.8)
-            # Annotation (adjusted position)
-            _fig.add_annotation(
-                x=_load_time, y=1.12, yref="paper", text=" ", showarrow=False,
-                font=dict(size=10, color="#f1c40f"), xanchor="left", xshift=5
-            )
+        # Load Disturbance Marker
+        if load_config["Load"] > 0.01:
+            fig.add_vline(x=load_config["T_load"], line_width=2, line_dash="dot", line_color="#8e44ad", opacity=0.8)
 
-        # E. Styling & Margins
-        _fig.update_layout(
-            height=750, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color="#555"), showlegend=False, margin=dict(t=80, b=30, l=50, r=20)
+        # General Styling
+        fig.update_layout(
+            height=750, 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="#aaa"), 
+            showlegend=False, 
+            margin=dict(t=80, b=30, l=60, r=20),
+            hovermode='x unified'
         )
+        grid_style = dict(showgrid=True, gridcolor='rgba(170, 170, 170, 0.2)')
+        fig.update_xaxes(**grid_style)
+        fig.update_yaxes(**grid_style)
 
-        _grid_style = dict(showgrid=True, gridcolor='rgba(64, 160, 255, 0.1)')
-        _fig.update_xaxes(**_grid_style, row=1, col=1); _fig.update_yaxes(**_grid_style, row=1, col=1)
-        _fig.update_xaxes(**_grid_style, row=2, col=1); _fig.update_yaxes(**_grid_style, row=2, col=1)
-        _fig.update_xaxes(**_grid_style, row=3, col=1); _fig.update_yaxes(**_grid_style, row=3, col=1)
+        return fig
 
-        return _fig
-
-    # 3. Call Function & Display - NO CHANGES HERE
+    # 3. Call the plotting function and render the final output.
     final_dashboard_fig = generate_dashboard_plot(t_data, w_data, te_data, iq_data, ref_data, sim_settings.value)
 
-    # 4. Render - NO CHANGES HERE
     mo.vstack([
-        mo.md("### 🏎️ Vehicle Performance"),
+        mo.md("### 🏎️ Vehicle Performance Simulation"),
         mo.ui.plotly(final_dashboard_fig)
     ])
     return iq_data, ki_log, kp_log, ref_data, t_data, te_data, w_data
@@ -968,106 +950,20 @@ def _(mo):
 
 @app.cell
 def _(np):
-    # The cell starts here
-
-
-    # --- Controller 1: The Gain Generator (FLC1) ---
-    class RealFuzzyController:
+    class BaseFuzzyController:
         def __init__(self):
             self.terms = ['NB', 'NS', 'Z', 'PS', 'PB']
             self.centers = {'NB': -1.0, 'NS': -0.5, 'Z': 0.0, 'PS': 0.5, 'PB': 1.0}
 
-            # --- Outputs and Rule Bases for Kp and Ki ---
-            # These are example values and will likely need tuning.
-            self.kp_outputs = {'S': 10,  'M': 40,  'B': 80,  'VB': 120}
-            self.ki_outputs = {'S': 20,  'M': 80,  'B': 150, 'VB': 250}
-
-            # Rule base for Kp: Determines the proportional response.
-            self.kp_rule_matrix = [
-                # de:  NB,   NS,   Z,   PS,   PB
-                ['VB', 'B',  'B',  'M',  'S'],  # e: NB
-                ['B',  'B',  'M',  'S',  'S'],  # e: NS
-                ['B',  'M',  'S',  'M',  'B'],  # e: Z
-                ['S',  'S',  'M',  'B',  'B'],  # e: PS
-                ['S',  'M',  'B',  'B',  'VB']  # e: PB
-            ]
-            # Rule base for Ki: Determines the integral response to eliminate steady-state error.
-            self.ki_rule_matrix = [
-                # de:  NB,   NS,   Z,   PS,   PB
-                ['VB', 'VB', 'B',  'M',  'S'],  # e: NB
-                ['VB', 'B',  'M',  'S',  'M'],  # e: NS
-                ['B',  'M',  'S',  'M',  'B'],  # e: Z
-                ['M',  'S',  'M',  'B',  'VB'],  # e: PS
-                ['S',  'M',  'B',  'VB', 'VB']  # e: PB
-            ]
-
         def triangle_mf(self, x, center, width=0.5):
+            """Calculates the membership degree for a triangular function."""
             return max(0, 1 - abs(x - center) / width)
 
-        def compute_base_gains(self, error, delta_error):
-            e_norm = np.clip(error / 250.0 * 5.0, -1, 1)
-            de_norm = np.clip(delta_error / 10.0, -1, 1)
-
-            kp_numerator = 0.0
-            ki_numerator = 0.0
-            denominator = 0.0
-
-            for i, e_term in enumerate(self.terms):
-                mu_e = self.triangle_mf(e_norm, self.centers[e_term])
-                if mu_e == 0: continue
-
-                for j, de_term in enumerate(self.terms):
-                    mu_de = self.triangle_mf(de_norm, self.centers[de_term])
-                    if mu_de == 0: continue
-
-                    firing_strength = min(mu_e, mu_de)
-                    if firing_strength == 0: continue
-
-                    # Calculate numerator for Kp
-                    kp_output_term = self.kp_rule_matrix[i][j]
-                    kp_output_val = self.kp_outputs[kp_output_term]
-                    kp_numerator += firing_strength * kp_output_val
-
-                    # Calculate numerator for Ki
-                    ki_output_term = self.ki_rule_matrix[i][j]
-                    ki_output_val = self.ki_outputs[ki_output_term]
-                    ki_numerator += firing_strength * ki_output_val
-
-                    denominator += firing_strength
-
-            if denominator == 0:
-                return (self.kp_outputs['M'], self.ki_outputs['M']) # Return medium default values
-
-            final_kp = kp_numerator / denominator
-            final_ki = ki_numerator / denominator
-
-            return (final_kp, final_ki)
-
-    # --- Controller 2: The Scaling Factor Generator (FLC2) ---
-    class FuzzyScalerController:
-        def __init__(self):
-            self.terms = ['NB', 'NS', 'Z', 'PS', 'PB']
-            self.centers = {'NB': -1.0, 'NS': -0.5, 'Z': 0.0, 'PS': 0.5, 'PB': 1.0}
-
-            # Outputs are scaling factors, numbers around 1.0
-            self.outputs = {'S': 0.9, 'M': 1.0, 'B': 1.1, 'VB': 1.2}
-
-            # This rule base determines how to fine-tune the gains from FLC1.
-            self.rule_matrix = [
-                # de:  NB,   NS,   Z,   PS,   PB
-                ['VB', 'B',  'M',  'S',  'S'],  # e: NB
-                ['B',  'B',  'M',  'S',  'S'],  # e: NS
-                ['M',  'M',  'S',  'M',  'M'],  # e: Z
-                ['S',  'S',  'M',  'B',  'B'],  # e: PS
-                ['S',  'S',  'M',  'B',  'VB']  # e: PB
-            ]
-
-        def triangle_mf(self, x, center, width=0.5):
-            return max(0, 1 - abs(x - center) / width)
-
-        def compute_scaling_factor(self, error, delta_error):
-            e_norm = np.clip(error / 250.0 * 5.0, -1, 1)
-            de_norm = np.clip(delta_error / 10.0, -1, 1)
+        def _compute_single_output(self, error, delta_error, rule_matrix, output_values):
+            """A generic, reusable function to compute one fuzzy output."""
+            # Normalize inputs to the range [-1, 1]
+            e_norm = np.clip(error / 250.0, -1, 1)
+            de_norm = np.clip(delta_error / 150.0, -1, 1)
 
             numerator = 0.0
             denominator = 0.0
@@ -1081,134 +977,161 @@ def _(np):
                     if mu_de == 0: continue
 
                     firing_strength = min(mu_e, mu_de)
-                    output_term = self.rule_matrix[i][j]
-                    output_val = self.outputs[output_term]
-                    numerator += firing_strength * output_val
-                    denominator += firing_strength
+                    if firing_strength > 0:
+                        output_term = rule_matrix[i][j]
+                        output_val = output_values[output_term]
+                        numerator += firing_strength * output_val
+                        denominator += firing_strength
 
             if denominator == 0:
-                return 1.0 # Default scaling factor is 1.0 (no change)
+                # Return a neutral default value (e.g., Medium or Zero) if no rules fire
+                return output_values.get('M', output_values.get('Z', 1.0))
 
             return numerator / denominator
 
+    # --- THIS IS THE NEW, PAPER-ALIGNED FUZZY CONTROLLER ---
+    # It generates TWO independent scaling factors, U1 and U2.
+    class FuzzyGainTuner(BaseFuzzyController):
+        def __init__(self):
+            super().__init__()
+            # Output values represent scaling factors (unitless, numbers around 1.0)
+            self.u_outputs = {'S': 0.8, 'M': 1.0, 'B': 1.2, 'VB': 1.5}
 
-    # The cell ends here
-    return FuzzyScalerController, RealFuzzyController
+            # Rule Base for U1 (for Kp scaling), designed for a fast transient response.
+            # Aggressive when error is large.
+            self.u1_rule_matrix = [
+                # de:  NB,   NS,   Z,   PS,   PB
+                ['VB', 'B',  'B',  'M',  'S'],  # e: NB
+                ['B',  'B',  'M',  'S',  'S'],  # e: NS
+                ['M',  'M',  'S',  'M',  'M'],  # e: Z
+                ['S',  'S',  'M',  'B',  'B'],  # e: PS
+                ['S',  'M',  'B',  'B',  'VB']  # e: PB
+            ]
+
+            # Rule Base for U2 (for Ki scaling), designed to reduce overshoot.
+            # Gentle (reduces integral action) when error is shrinking towards zero.
+            self.u2_rule_matrix = [
+                # de:  NB,   NS,   Z,   PS,   PB
+                ['S',  'S',  'M',  'B',  'VB'], # e: NB
+                ['S',  'S',  'M',  'B',  'B'],  # e: NS
+                ['M',  'M',  'S',  'M',  'M'],  # e: Z
+                ['B',  'B',  'M',  'S',  'S'],  # e: PS
+                ['VB', 'B',  'M',  'S',  'S']   # e: PB
+            ]
+
+        def compute_tuning_factors(self, error, delta_error):
+            """
+            Computes and returns two independent tuning factors, U1 (for Kp) and U2 (for Ki).
+            """
+            u1 = self._compute_single_output(error, delta_error, self.u1_rule_matrix, self.u_outputs)
+            u2 = self._compute_single_output(error, delta_error, self.u2_rule_matrix, self.u_outputs)
+            return u1, u2
+    return (FuzzyGainTuner,)
 
 
 @app.cell
-def _(FuzzyScalerController, RealFuzzyController, mo):
-    # The cell starts here
-
-    # --- CONSTANTS FOR OPTIONS ---
-    OPT_KP = "Kp Output (from FLC1)"
-    OPT_KI = "Ki Output (from FLC1)"
-    OPT_SF = "Scaling Factor Output (from FLC2)"
+def _(FuzzyGainTuner, mo):
+    OPT_U1 = "U1 Tuning Factor (for Kp)"
+    OPT_U2 = "U2 Tuning Factor (for Ki)"
 
     # --- UI ELEMENT FOR SELECTION ---
-    # This cell ONLY defines the UI element. It does not access its .value
+    # Create the dropdown menu to select which output to visualize.
     fuzzy_viz_selector = mo.ui.dropdown(
-        options=[OPT_KP, OPT_KI, OPT_SF],
-        value=OPT_KP,
+        options=[OPT_U1, OPT_U2],
+        value=OPT_U1,
         label="Select Control Surface to Visualize:"
     )
 
-    # We also need the controller instances for the next cell
-    flc1_viz_instance = RealFuzzyController()
-    flc2_viz_instance = FuzzyScalerController()
+    # We only need one instance of our new, unified fuzzy controller.
+    fuzzy_tuner_viz_instance = FuzzyGainTuner()
 
-    # The final output of this cell is just the UI element itself and the instances
+    # The final output of this cell is the user interface.
+    # The selected value and the controller instance will be passed to the next cells.
     mo.vstack([
         mo.md("## 🧩 Fuzzy Controller Internals"),
-        mo.md("""
-        This dashboard visualizes the internal logic of the fuzzy controllers.
-        1.  **Fuzzification:** The top plot shows the shared membership functions for inputs.
-        2.  **Control Surface:** The bottom 3D plot is the decision-making map. Use the dropdown to switch between the different fuzzy outputs.
-        """),
-        fuzzy_viz_selector # Display the dropdown
-    ])
+        mo.md(
+            """
+            This dashboard visualizes the internal logic of the dual-output fuzzy controller.
 
-    # The cell ends here
-    return (
-        OPT_KI,
-        OPT_KP,
-        flc1_viz_instance,
-        flc2_viz_instance,
-        fuzzy_viz_selector,
-    )
+            1.  **Fuzzification:** The top plot shows the shared membership functions for the `Error` and `Change in Error` inputs.
+            2.  **Control Surface:** The bottom 3D plot shows the decision-making map. Use the dropdown to switch between visualizing the two independent outputs:
+                - **`U1`:** The scaling factor for `Kp`, designed for a fast response.
+                - **`U2`:** The scaling factor for `Ki`, designed to control overshoot.
+            """
+        ),
+        fuzzy_viz_selector # Display the dropdown menu
+    ])
+    return OPT_U1, fuzzy_tuner_viz_instance, fuzzy_viz_selector
 
 
 @app.cell
-def _(
-    OPT_KI,
-    OPT_KP,
-    flc1_viz_instance,
-    flc2_viz_instance,
-    fuzzy_viz_selector,
-    go,
-    mo,
-    np,
-):
-    # The cell starts here
-
-    # --- DYNAMIC VISUALIZATION LOGIC ---
-    # This cell DEPENDS on fuzzy_viz_selector from the previous cell.
-    # Here, we are allowed to access .value
+def _(OPT_U1, fuzzy_tuner_viz_instance, fuzzy_viz_selector, go, mo, np):
     selected_surface = fuzzy_viz_selector.value
 
     # =======================================================
-    # PART 1: Fuzzification Visualization (Membership Functions)
+    # PART 1: Fuzzification Plot (Membership Functions)
+    # This plot is static and doesn't depend on the dropdown.
     # =======================================================
     x_range = np.linspace(-1.5, 1.5, 300)
     fig_mf = go.Figure()
     colors = ['#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db']
-    for idx, term in enumerate(flc1_viz_instance.terms):
-        y_values = [flc1_viz_instance.triangle_mf(x, flc1_viz_instance.centers[term]) for x in x_range]
+
+    # Use the single fuzzy_tuner_viz_instance
+    for idx, term in enumerate(fuzzy_tuner_viz_instance.terms):
+        y_values = [fuzzy_tuner_viz_instance.triangle_mf(x, fuzzy_tuner_viz_instance.centers[term]) for x in x_range]
         fig_mf.add_trace(go.Scatter(
             x=x_range, y=y_values, name=f"Term: {term}", fill='tozeroy',
             line=dict(color=colors[idx], width=2.5), opacity=0.7
         ))
+
     fig_mf.update_layout(
-        title=dict(text="<b>1. Fuzzification Stage (Shared Membership Functions)</b>", y=0.9, x=0.01, xanchor='left', yanchor='top'),
-        xaxis_title="Normalized Input (e.g., Error)", yaxis_title="Degree of Membership (μ)", height=400,
-        margin=dict(l=40, r=20, t=120, b=40), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+        title=dict(text="<b>1. Fuzzification Stage (Shared Membership Functions)</b>"),
+        xaxis_title="Normalized Input (e.g., Error)", yaxis_title="Degree of Membership (μ)",
+        height=400, margin=dict(l=40, r=20, t=80, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color="#aaa"
     )
 
     # =================================================================
     # PART 2: Dynamic Control Surface Visualization
+    # This part is reactive to the dropdown selection.
     # =================================================================
     res = 40
     e_vec = np.linspace(-250, 250, res)
-    de_vec = np.linspace(-10, 10, res)
+    de_vec = np.linspace(-150, 150, res) # Expanded range for de/dt
     z_surface = np.zeros((res, res))
-    z_axis_title = ""
 
+    # Get the correct rule matrix and output values based on the selection
+    if selected_surface == OPT_U1:
+        rule_matrix = fuzzy_tuner_viz_instance.u1_rule_matrix
+        output_values = fuzzy_tuner_viz_instance.u_outputs
+        z_axis_title = "U1 Tuning Factor (for Kp)"
+    else: # OPT_U2
+        rule_matrix = fuzzy_tuner_viz_instance.u2_rule_matrix
+        output_values = fuzzy_tuner_viz_instance.u_outputs
+        z_axis_title = "U2 Tuning Factor (for Ki)"
+
+    # Calculate the z-surface for the plot
     for i in range(res):
         for j in range(res):
-            if selected_surface == OPT_KP or selected_surface == OPT_KI:
-                kp_val, ki_val = flc1_viz_instance.compute_base_gains(e_vec[i], de_vec[j])
-                if selected_surface == OPT_KP:
-                    z_surface[j][i] = kp_val
-                    z_axis_title = "Base Kp Output"
-                else: # OPT_KI
-                    z_surface[j][i] = ki_val
-                    z_axis_title = "Base Ki Output"
-            else: # OPT_SF
-                z_surface[j][i] = flc2_viz_instance.compute_scaling_factor(e_vec[i], de_vec[j])
-                z_axis_title = "Scaling Factor (SF) Output"
+            # Use the generic, internal compute function from the BaseFuzzyController
+            z_surface[j][i] = fuzzy_tuner_viz_instance._compute_single_output(
+                e_vec[i], de_vec[j], rule_matrix, output_values
+            )
 
     fig_surf = go.Figure(data=[go.Surface(
         z=z_surface, x=e_vec, y=de_vec, colorscale='Plasma',
         contours_z=dict(show=True, usecolormap=True, highlightcolor="#00FFFF", project_z=True),
         opacity=0.9
     )])
+
     fig_surf.update_layout(
-        title=dict(text=f"<b>2. Control Surface for: {z_axis_title}</b>", y=0.92, x=0.01, xanchor='left', yanchor='top'),
+        title=dict(text=f"<b>2. Control Surface for: {z_axis_title}</b>"),
         scene=dict(
-            xaxis_title='Error (E)', yaxis_title='Change of Error (dE)', zaxis_title=z_axis_title,
-            camera=dict(eye=dict(x=1.6, y=1.6, z=1.2))),
-        height=600, margin=dict(l=10, r=10, t=100, b=10),
+            xaxis_title='Error (e)', yaxis_title='Change of Error (de/dt)', zaxis_title=z_axis_title,
+            camera=dict(eye=dict(x=1.8, y=1.8, z=1.4))
+        ),
+        height=600, margin=dict(l=10, r=10, t=80, b=10),
         paper_bgcolor='rgba(0,0,0,0)', font_color="#aaa"
     )
 
@@ -1217,105 +1140,71 @@ def _(
     # ==========================================
     mo.vstack([
         mo.ui.plotly(fig_mf),
-    
     ])
-
-    # The cell ends here
     return (fig_surf,)
 
 
 @app.cell
 def _(fig_surf, mo):
-    mo.ui.plotly(fig_surf)
+    mo.ui.plotly(fig_surf),
     return
 
 
 @app.cell
-def _(
-    OPT_KI,
-    OPT_KP,
-    flc1_viz_instance,
-    flc2_viz_instance,
-    fuzzy_viz_selector,
-    go,
-    mo,
-):
-    # The cell starts here
+def _(OPT_U1, fuzzy_tuner_viz_instance, fuzzy_viz_selector, go, mo):
+    selected_heatmap = fuzzy_viz_selector.value
 
-    # This cell DEPENDS on fuzzy_viz_selector from a PREVIOUS cell.
-    # We access its .value to decide which heatmap to display.
-    selected_display_hm = fuzzy_viz_selector.value # Using a unique variable name
-
-    # --- SELECT THE CORRECT CONTROLLER, RULE MATRIX, AND TITLE ---
-    # Based on the value from the shared dropdown
-    if selected_display_hm == OPT_KP:
-        controller_to_display_hm = flc1_viz_instance # FLC1
-        matrix_to_display_hm = controller_to_display_hm.kp_rule_matrix
-        title_text_hm = "Rule Matrix for Kp (from FLC1)"
-        description_hm = """
-        This heatmap shows the logic for the Proportional Gain (`Kp`).
-        Notice the aggressive response (`VB`, `B`) when the error is large, designed for rapid correction.
+    # --- Step 1: Select the Correct Rule Matrix and Description ---
+    # The logic is now much simpler.
+    if selected_heatmap == OPT_U1:
+        matrix_to_display = fuzzy_tuner_viz_instance.u1_rule_matrix
+        title_text_1 = "Rule Matrix for U1 (Kp Scaling)"
+        description_text_1 = """
+        This heatmap visualizes the logic for the **U1** scaling factor, which adjusts `Kp`. 
+        Notice the aggressive response (`VB`, `B`) when the error is large. This is designed to make the controller react quickly to large disturbances.
         """
-    elif selected_display_hm == OPT_KI:
-        controller_to_display_hm = flc1_viz_instance # FLC1
-        matrix_to_display_hm = controller_to_display_hm.ki_rule_matrix
-        title_text_hm = "Rule Matrix for Ki (from FLC1)"
-        description_hm = """
-        This heatmap shows the logic for the Integral Gain (`Ki`).
-        The rules here focus on eliminating steady-state error, often becoming aggressive (`VB`) when the error persists over time.
-        """
-    else: # OPT_SF
-        controller_to_display_hm = flc2_viz_instance # FLC2
-        matrix_to_display_hm = controller_to_display_hm.rule_matrix
-        title_text_hm = "Rule Matrix for Scaling Factor (from FLC2)"
-        description_hm = """
-        This heatmap shows the fine-tuning logic. The values are typically conservative, centered around 'M' (Medium),
-        to provide small adjustments to the primary gains from FLC1.
+    else: # OPT_U2
+        matrix_to_display = fuzzy_tuner_viz_instance.u2_rule_matrix
+        title_text_1 = "Rule Matrix for U2 (Ki Scaling)"
+        description_text_1 = """
+        This heatmap visualizes the logic for the **U2** scaling factor, which adjusts `Ki`. 
+        This logic is often designed to be more conservative to prevent overshoot, reducing the integral action (`S`) when the system is approaching the target.
         """
 
     # =======================================================
-    # PART 1: Prepare Data for the Heatmap
+    # PART 2: Prepare Data for the Heatmap
     # =======================================================
-    rule_map_val_hm = {'VB': 4, 'B': 3, 'M': 2, 'S': 1}
-    rule_map_text_hm = []
-    rule_map_num_hm = []
-    rows_hm = len(controller_to_display_hm.terms)
-    cols_hm = len(controller_to_display_hm.terms)
+    # Define the mapping from linguistic terms to numerical values for coloring.
+    rule_map_to_num = {'VB': 4, 'B': 3, 'M': 2, 'S': 1}
 
-    # --- USING UNIQUE LOOP COUNTERS ---
-    for row_idx in range(rows_hm): # Changed 'i' to 'row_idx'
-        row_text = []
-        row_num = []
-        for col_idx in range(cols_hm): # Changed 'j' to 'col_idx'
-            rule_str = matrix_to_display_hm[row_idx][col_idx]
-            row_text.append(rule_str)
-            row_num.append(rule_map_val_hm.get(rule_str, 0))
-        rule_map_text_hm.append(row_text)
-        rule_map_num_hm.append(row_num)
+    # Convert the selected text matrix to a numerical matrix for the z-axis.
+    numerical_matrix = [
+        [rule_map_to_num.get(rule, 0) for rule in row] 
+        for row in matrix_to_display
+    ]
 
     # =======================================================
-    # PART 2: Create the Heatmap Figure
+    # PART 3: Create the Heatmap Figure
     # =======================================================
-    fig_rules_hm = go.Figure(data=go.Heatmap(
-        z=rule_map_num_hm,
-        x=controller_to_display_hm.terms,
-        y=controller_to_display_hm.terms,
-        text=rule_map_text_hm,
+    fig_rules = go.Figure(data=go.Heatmap(
+        z=numerical_matrix,
+        x=fuzzy_tuner_viz_instance.terms,
+        y=fuzzy_tuner_viz_instance.terms,
+        text=matrix_to_display, # Display the original text labels ('VB', 'B', etc.)
         texttemplate="%{text}",
         textfont={"size": 16, "color": "white"},
         colorscale=[
-            [0.0, '#27ae60'], [0.33, '#f39c12'],
-            [0.66, '#e67e22'], [1.0, '#c0392b']
+            [0.25*i, color] for i, color in enumerate(['#27ae60', '#f39c12', '#e67e22', '#c0392b'])
         ],
         xgap=4, ygap=4, showscale=False
     ))
 
     # =======================================================
-    # PART 3: Update Figure Layout
+    # PART 4: Update Figure Layout
     # =======================================================
-    fig_rules_hm.update_layout(
-        xaxis_title="Change of Error (dE)",
-        yaxis_title="Error (E)",
+    fig_rules.update_layout(
+        xaxis_title="Change of Error (de/dt)",
+        yaxis_title="Error (e)",
         height=550,
         margin=dict(l=50, r=50, t=50, b=50),
         paper_bgcolor='rgba(0,0,0,0)',
@@ -1324,15 +1213,13 @@ def _(
     )
 
     # =======================================================
-    # PART 4: Render the final Marimo output with dynamic titles
+    # PART 5: Render the final Marimo output with dynamic content
     # =======================================================
     mo.vstack([
-        mo.md(f"## 🚦 The Controller's Brain: {title_text_hm}"),
-        mo.md(description_hm),
-        mo.ui.plotly(fig_rules_hm)
+        mo.md(f"## 🚦 The Controller's Brain: {title_text_1}"),
+        mo.md(description_text_1),
+        mo.ui.plotly(fig_rules)
     ])
-
-    # The cell ends here
     return
 
 
@@ -1575,48 +1462,49 @@ def _(mo):
 
 @app.cell
 def _(OPT_GA, np, simulate_pmsm_system):
-    # The cell starts here
-
     class GeneticOptimizerEngine:
         """
         A Genetic Algorithm (GA) engine designed to find the optimal controller parameters
         for the transient response of the AFFOPID system.
         """
         def __init__(self, motor_phys, vehicle_phys, sim_setup, switch_params, custom_bounds=None):
-            """
-            Initializes the optimizer with all necessary simulation parameters.
-            """
             self.motor_phys = motor_phys
             self.vehicle_phys = vehicle_phys
             self.sim_setup = sim_setup
             self.switch_params = switch_params
-
-            if custom_bounds:
-                self.bounds = custom_bounds
-            else:
-                self.bounds = [
-                    (0.1, 150.0), (0.1, 300.0), (0.0, 1.0),
-                    (0.1, 1.5), (0.1, 1.5), (0.1, 5.0)
-                ]
+            self.bounds = custom_bounds or [
+                (0.1, 150.0), (0.1, 300.0), (0.0, 1.0),
+                (0.1, 1.5), (0.1, 1.5), (0.1, 5.0)
+            ]
 
         def _evaluate_fitness(self, individual_genes):
             """
             Calculates the fitness of a single set of controller parameters.
             """
+            # The GA optimizes the BASE gains for the transient controller
             controller_candidate = {
-                "Kp": individual_genes[0], "Ki": individual_genes[1], "Kd": individual_genes[2],
-                "Lambda": individual_genes[3], "Mu": individual_genes[4], "Fuzzy_Scale": individual_genes[5]
+                "Kp_base": individual_genes[0], 
+                "Ki_base": individual_genes[1], 
+                "Kd": individual_genes[2],
+                "Lambda": individual_genes[3], 
+                "Mu": individual_genes[4]
+                # The 6th gene is not used here as it's part of the fuzzy logic itself
             }
+
+            # Use a short simulation time for fast evaluation
             fast_scenario = self.sim_setup.copy()
             fast_scenario["Time"] = 0.5
 
-            time, speed, _, _, _, _, _, ref = simulate_pmsm_system(
+            # --- THIS IS THE CORRECTED LINE ---
+            # Unpack all 9 return values, using placeholders (_) for ones we don't need for fitness calculation.
+            time, speed, _, _, _, _, _, _, ref = simulate_pmsm_system(
                 controller_candidate, fast_scenario, self.motor_phys, self.vehicle_phys, 
                 self.switch_params, strategy_type=OPT_GA
             )
+            # --- END OF CORRECTION ---
 
             dt = time[1] - time[0]
-            ref_val = ref if isinstance(ref, (int, float)) else ref[0]
+            ref_val = ref if isinstance(ref, (int, float)) else ref
             error = ref_val - speed
             ise_cost = np.sum(np.square(error)) * dt
 
@@ -1626,14 +1514,10 @@ def _(OPT_GA, np, simulate_pmsm_system):
 
             return ise_cost
 
-        # --- START OF CORRECTION ---
-        # Added 'crossover_rate' to the function definition
         def run(self, pop_size=20, generations=10, mutation_rate=0.1, crossover_rate=0.7):
-        # --- END OF CORRECTION ---
             """
             Executes the main Genetic Algorithm loop.
             """
-            # 1. Initialization
             population = [[np.random.uniform(L, H) for L, H in self.bounds] for _ in range(pop_size)]
             best_solution = None
             best_fitness = float('inf')
@@ -1641,14 +1525,13 @@ def _(OPT_GA, np, simulate_pmsm_system):
             convergence_history = []
             full_trial_history = []
 
-            # 2. Main Evolutionary Loop
             for gen in range(generations):
                 fitness_scores = [self._evaluate_fitness(individual) for individual in population]
 
                 for i, individual in enumerate(population):
                     full_trial_history.append({
-                        'Generation': gen + 1, 'Kp': individual[0], 'Ki': individual[1], 'Kd': individual[2],
-                        'Lambda': individual[3], 'Mu': individual[4], 'Alpha': individual[5],
+                        'Generation': gen + 1, 'Kp_base': individual[0], 'Ki_base': individual[1], 'Kd': individual[2],
+                        'Lambda': individual[3], 'Mu': individual[4],
                         'Cost': fitness_scores[i]
                     })
 
@@ -1659,31 +1542,24 @@ def _(OPT_GA, np, simulate_pmsm_system):
 
                 convergence_history.append(best_fitness)
 
-                # 3. Evolution: Create the next generation
+                # Evolution: Create the next generation
                 new_population = [best_solution] # Elitism
-
                 while len(new_population) < pop_size:
                     # Parent Selection (Tournament)
                     p1_idx, p2_idx = np.random.choice(range(pop_size), 2, replace=False)
                     parent1 = population[p1_idx] if fitness_scores[p1_idx] < fitness_scores[p2_idx] else population[p2_idx]
-
                     p3_idx, p4_idx = np.random.choice(range(pop_size), 2, replace=False)
                     parent2 = population[p3_idx] if fitness_scores[p3_idx] < fitness_scores[p4_idx] else population[p4_idx]
 
-                    # Crossover (Arithmetic)
+                    # Crossover & Mutation
+                    child = parent1[:]
                     if np.random.random() < crossover_rate:
                         alpha = np.random.random()
                         child = [p1 * alpha + p2 * (1 - alpha) for p1, p2 in zip(parent1, parent2)]
-                    else:
-                        child = parent1[:]
-
-                    # Mutation
                     for i in range(len(child)):
                         if np.random.random() < mutation_rate:
                             child[i] = np.random.uniform(self.bounds[i][0], self.bounds[i][1])
-
                     new_population.append(child)
-
                 population = new_population
 
             return best_solution, best_fitness, convergence_history, full_trial_history
@@ -1721,12 +1597,12 @@ def _(mo):
 
     # 3. Search Space Bounds Configuration
     ga_bounds_config = {
-        "Kp":   {"label": "Prop. Gain (Kp)",   "min": 0.1, "max": 500.0, "start_min": 0.1,  "start_max": 150.0},
+        "Kp":   {"label": "Prop. Gain (Kp)",   "min": 0.1, "max": 500.0, "start_min": 0.1,  "start_max": 300.0},
         "Ki":   {"label": "Integ. Gain (Ki)",   "min": 0.1, "max": 500.0, "start_min": 0.1,  "start_max": 300.0},
-        "Kd":   {"label": "Deriv. Gain (Kd)",   "min": 0.0, "max": 100.0, "start_min": 0.0,  "start_max": 2.0},
+        "Kd":   {"label": "Deriv. Gain (Kd)",   "min": 0.0, "max": 300.0, "start_min": 0.0,  "start_max": 2.0},
         "Lam":  {"label": "Int. Order (λ)",     "min": 0.1, "max": 2.0,   "start_min": 0.8,  "start_max": 1.2},
         "Mu":   {"label": "Diff. Order (µ)",    "min": 0.1, "max": 2.0,   "start_min": 0.8,  "start_max": 1.2},
-        "Fuz":  {"label": "Fuzzy Scale (α)",    "min": 0.1, "max": 10.0,  "start_min": 0.5,  "start_max": 3.0}
+        "Fuz":  {"label": "Fuzzy Scale (α)",    "min": 0.1, "max": 10.0,  "start_min": 0.5,  "start_max": 5.0}
     }
 
     # Create the UI elements from the configuration dictionary
@@ -1903,7 +1779,7 @@ def _(get_ga_full_history, mo):
     else:
         # If data exists, prepare it and create the UI.
         import pandas as pd
-    
+
         # Create the main DataFrame from the full history and sort it by performance.
         history_df = pd.DataFrame(get_ga_full_history()).sort_values(by='Cost').reset_index(drop=True)
 
@@ -1936,7 +1812,7 @@ def _(ga_result_filter_slider, history_df):
         start_idx = int(len(history_df) * (min_percent / 100.0))
         # Ensure end_idx is at least start_idx + 1 to avoid empty slices
         end_idx = max(start_idx + 1, int(len(history_df) * (max_percent / 100.0)))
-    
+
         filtered_df = history_df.iloc[start_idx:end_idx]
     else:
         filtered_df = None
@@ -1944,7 +1820,7 @@ def _(ga_result_filter_slider, history_df):
 
 
 @app.cell(hide_code=True)
-def _(filtered_df, go, history_df, mo):
+def _(filtered_df, go, mo):
     # Cell 4: Parallel Coordinates Plot (Reactive)
 
     if filtered_df is not None and not filtered_df.empty:
@@ -1954,7 +1830,7 @@ def _(filtered_df, go, history_df, mo):
         ))
         fig_par.update_layout(title="<b>Parallel Coordinates of Filtered Solutions</b>", height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         mo.ui.plotly(fig_par)
-    elif 'history_df' in globals() and history_df is not None:
+    else:
         lll=mo.md("ℹ️ *No data in the selected filter range. Adjust the slider above.*")
     lll
     return (lll,)
@@ -1985,7 +1861,7 @@ def _(get_ga_best_genes, get_ga_convergence, go, mo):
         """
 
         # --- ENHANCEMENTS APPLIED HERE ---
-    
+
         # 1. Create the Plotly figure for the convergence history.
         fig_conv = go.Figure(data=go.Scatter(
             x=list(range(1, len(history_scores_data) + 1)), 
@@ -2026,10 +1902,14 @@ def _(get_ga_best_genes, get_ga_convergence, go, mo):
 def _(lll, mo, results_table, summary_output):
     just_table_to_show=lll
     if summary_output!=None:
-
-
         just_table_to_show=mo.vstack([mo.md("### 🏆 Best Solution & Convergence"),mo.md(results_table)])
     just_table_to_show
+    return
+
+
+@app.cell
+def _(filtered_df):
+    filtered_df
     return
 
 
@@ -2042,7 +1922,7 @@ def _(filtered_df, go, mo):
 
     # Check if the filtered data from the upstream cell is available and not empty.
     if filtered_df is not None and not filtered_df.empty:
-    
+
         # --- Step 1: Identify the "Winner" ---
         # Find the index of the solution with the lowest cost in the filtered data.
         winner_idx = filtered_df['Cost'].idxmin()
@@ -2054,8 +1934,8 @@ def _(filtered_df, go, mo):
 
         # Trace 1: All the other data points (the "trials")
         fig_3d.add_trace(go.Scatter3d(
-            x=filtered_df['Kp'], 
-            y=filtered_df['Ki'], 
+            x=filtered_df['Kp_base'], 
+            y=filtered_df['Ki_base'], 
             z=filtered_df['Cost'], 
             mode='markers',
             marker=dict(
@@ -2071,8 +1951,8 @@ def _(filtered_df, go, mo):
 
         # Trace 2: The single "Winner" point
         fig_3d.add_trace(go.Scatter3d(
-            x=[winner_solution['Kp']], # Must be in a list
-            y=[winner_solution['Ki']],
+            x=[winner_solution['Kp_base']], # Must be in a list
+            y=[winner_solution['Ki_base']],
             z=[winner_solution['Cost']],
             mode='markers',
             marker=dict(
@@ -2083,7 +1963,7 @@ def _(filtered_df, go, mo):
             ),
             name='Best Solution' # Label for the legend
         ))
-    
+
         # --- Step 3: Apply Professional Layout and Styling ---
         fig_3d.update_layout(
             title="<b>3D Optimization Landscape with Best Solution Highlighted</b>", 
@@ -2104,7 +1984,7 @@ def _(filtered_df, go, mo):
                 zaxis=dict(gridcolor='rgba(255, 255, 255, 0.1)')
             )
         )
-    
+
         # The final output for this cell is the Plotly figure.
         plot_3d_output = mo.ui.plotly(fig_3d)
 
@@ -2123,10 +2003,10 @@ def _(filtered_df, mo):
 
     # Check if the filtered data from the upstream cell is available and not empty.
     if filtered_df is not None and not filtered_df.empty:
-    
+
         # 1. Create a clear title for the table using Marimo's markdown.
         table_title = mo.md("### Detailed Log of Filtered Solutions")
-    
+
         # 2. Create the interactive table object directly.
         # The 'label' parameter provides helpful context for the table.
         detailed_table = mo.ui.table(
@@ -2135,7 +2015,7 @@ def _(filtered_df, mo):
             page_size=14,
             label="A log of all trials within the selected performance percentile."
         )
-    
+
         # 3. Combine the title and the table into a single vertical stack for a clean layout.
         table_output = mo.vstack([table_title, detailed_table])
 

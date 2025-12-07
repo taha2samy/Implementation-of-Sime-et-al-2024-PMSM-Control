@@ -32,15 +32,15 @@
         ]
       },
       {
+        "position": null
+      },
+      {
         "position": [
           0,
           25,
           23,
           42
         ]
-      },
-      {
-        "position": null
       },
       {
         "position": null
@@ -203,6 +203,9 @@
           12,
           32
         ]
+      },
+      {
+        "position": null
       }
     ]
   }
