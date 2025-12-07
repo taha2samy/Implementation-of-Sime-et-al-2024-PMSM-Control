@@ -154,10 +154,10 @@ def _(mo):
     # 3. Define the parameters for the Switch logic and the steady-state FOPID controller.
     # These will be displayed in the sidebar ONLY when the OPT_GA mode is active.
     switch_and_fopid_params = mo.ui.dictionary({
-        "Kp_fixed": mo.ui.number(10.0, 500.0, 0.1, 50.0, label=r"Fixed Kp (Steady-State)", full_width=True),
-        "Ki_fixed": mo.ui.number(10.0, 500.0, 0.1, 100.0, label=r"Fixed Ki (Steady-State)", full_width=True),
+        "Kp_fixed": mo.ui.number(0.00001, 500.0, 0.000001, 50.0, label=r"Fixed Kp (Steady-State)", full_width=True),
+        "Ki_fixed": mo.ui.number(0.00001, 500.0, 0.000001, 100.0, label=r"Fixed Ki (Steady-State)", full_width=True),
         # The Kd can be shared, so we don't need a separate fixed Kd unless specified.
-        "Threshold": mo.ui.number(0.1, 10.0, 0.1, 0.5, label=r"Switching Threshold |E|", full_width=True)
+        "Threshold": mo.ui.number(0.1, 10.0, 0.000001, 0.5, label=r"Switching Threshold |E|", full_width=True)
     })
     return OPT_FOPID, OPT_GA, OPT_PID, switch_and_fopid_params, vault
 
@@ -182,9 +182,9 @@ def _(OPT_GA, controller_selector, mo, switch_and_fopid_params, vault):
     # 2. Other settings (Simulation & Motor)
     sim_settings = mo.ui.dictionary({
         "Ref": mo.ui.number(0, 1000, 1, 250, label=r"Ref Speed $\omega^*$ (rad/s)", full_width=True),
-        "Load": mo.ui.number(0, 500, 0.1, 50, label="Load Torque $T_L$ (N.m)", full_width=True),
-        "T_load": mo.ui.number(0, 5, 0.01, 0.1, label="Step Load Time (sec)", full_width=True),
-        "Time": mo.ui.number(0.1, 5.0, 0.01, 0.2, label="Total Time (sec)", full_width=True)
+        "Load": mo.ui.number(0, 500, 0.0001, 50, label="Load Torque $T_L$ (N.m)", full_width=True),
+        "T_load": mo.ui.number(0, 5, 0.0001, 0.1, label="Step Load Time (sec)", full_width=True),
+        "Time": mo.ui.number(0.1, 5.0, 0.0001, 0.2, label="Total Time (sec)", full_width=True)
     })
 
     motor_ui = mo.ui.dictionary({
@@ -252,53 +252,46 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(go, make_subplots, mo, np):
-    # Assume 'np', 'go', 'make_subplots', 'mo', and 'OustaloupFilter' are pre-defined.
-
-    # The fractional order to be tested (e.g., 0.5 represents a half-derivative).
+    # --- 1. Parameters & Setup ---
+    # This cell isolates and validates the core mathematical component of our FOPID controller:
+    # the fractional-order operator, s^α. We test a specific order here.
     test_order = 0.5
-    filter_viz = OustaloupFilter(test_order, freq_low=0.01, freq_high=100.0)
+    filter_instance = OustaloupFilter(test_order, freq_low=0.01, freq_high=100.0)
 
-    # ------------------------------------------
-    # Part A: Calculate Frequency Response (for Bode Plot)
-    # ------------------------------------------
-    # This part recalculates the continuous-time transfer function to plot the ideal response.
+    # --- 2. Frequency Domain Analysis (Bode Plot) ---
+    # We calculate the theoretical frequency response of the Oustaloup approximation.
     freqs = np.logspace(-3, 3, 500)
     magnitudes = []
     phases = []
 
     for w in freqs:
         s = 1j * w
-        h_s = filter_viz.gain
-        wb, wh, N, alpha = 0.01, 100.0, 3, test_order # Oustaloup params
+        h_s = filter_instance.gain
+        # Re-calculate the continuous-time transfer function for plotting
+        wb, wh, N = 0.01, 100.0, 3 
         for k in range(-N, N + 1):
-            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - alpha))/(2*N + 1))
-            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + alpha))/(2*N + 1))
+            w_z = wb * (wh/wb)**((k + N + 0.5*(1 - test_order))/(2*N + 1))
+            w_p = wb * (wh/wb)**((k + N + 0.5*(1 + test_order))/(2*N + 1))
             h_s *= (s + w_z) / (s + w_p)
-
         magnitudes.append(20 * np.log10(np.abs(h_s)))
         phases.append(np.angle(h_s, deg=True))
 
-    # ------------------------------------------
-    # Part B: Calculate Time Domain Response
-    # ------------------------------------------
-    # This part uses the discrete-time filter's 'compute' method.
+    # --- 3. Time Domain Analysis (Step Response) ---
+    # We simulate the discrete-time filter's response to a sudden input.
     time_sim = OustaloupFilter(test_order)
     t_vec = np.linspace(0, 10, 1000)
     input_step = np.ones_like(t_vec)
     output_response = [time_sim.compute(val) for val in input_step]
 
-    # ------------------------------------------
-    # Plotting Configuration & Theming
-    # ------------------------------------------
-    c_mag = '#00d2ff'   # Bright Cyan for Magnitude
-    c_phase = '#e74c3c' # Bright Red for Phase
-    c_resp = '#54a0ff'  # Bright Blue for Time Response
-    c_text = '#aaa'     # Light gray for text, visible on light/dark backgrounds
-    c_grid = 'rgba(170, 170, 170, 0.2)' # Subtle grid lines
+    # --- 4. Plotting & Visualization ---
+    # Define a theme-friendly color palette
+    c_mag = '#00d2ff'   # Cyan
+    c_phase = '#e74c3c' # Red
+    c_resp = '#54a0ff'  # Blue
+    c_text = '#aaa'     # Neutral Gray
+    c_grid = 'rgba(170, 170, 170, 0.2)'
 
-    # --- Key Subplot Configuration ---
-    # To create a chart with two y-axes (for magnitude and phase), we must use 'specs'
-    # to explicitly enable a secondary y-axis on the first subplot.
+    # Create the figure with a secondary y-axis for the Bode plot
     fig_filter = make_subplots(
         rows=1, cols=2,
         subplot_titles=(
@@ -306,90 +299,69 @@ def _(go, make_subplots, mo, np):
             f"<b style='color:{c_resp}'>Step Response (Time Domain)</b>"
         ),
         horizontal_spacing=0.15,
-        specs=[[{"secondary_y": True}, {}]] # <-- This enables the dual-axis plot
+        specs=[[{"secondary_y": True}, {}]]
     )
 
-    # Plot 1a: Add the Magnitude trace to the primary y-axis.
-    fig_filter.add_trace(go.Scatter(
-        x=freqs, y=magnitudes,
-        name="Magnitude (dB)",
-        line=dict(color=c_mag, width=2.5)
-    ), row=1, col=1, secondary_y=False)
+    # Plot 1a: Magnitude
+    fig_filter.add_trace(go.Scatter(x=freqs, y=magnitudes, name="Magnitude (dB)", line=dict(color=c_mag, width=2.5)), row=1, col=1, secondary_y=False)
 
-    # Plot 1b: Add the Phase trace to the secondary y-axis.
-    fig_filter.add_trace(go.Scatter(
-        x=freqs, y=phases,
-        name="Phase (Deg)",
-        line=dict(color=c_phase, width=2.5)
-    ), row=1, col=1, secondary_y=True) # <-- This assigns the trace to the second axis
+    # Plot 1b: Phase
+    fig_filter.add_trace(go.Scatter(x=freqs, y=phases, name="Phase (Deg)", line=dict(color=c_phase, width=2.5)), row=1, col=1, secondary_y=True)
 
-    # Plot 2a: Add the filter's time response to the second subplot.
-    fig_filter.add_trace(go.Scatter(
-        x=t_vec, y=output_response,
-        name=f"Response of s<sup>{test_order}</sup>",
-        line=dict(color=c_resp, width=2.5)
-    ), row=1, col=2)
+    # Plot 2a: Step Response
+    fig_filter.add_trace(go.Scatter(x=t_vec, y=output_response, name=f"Response of s<sup>{test_order}</sup>", line=dict(color=c_resp, width=2.5)), row=1, col=2)
 
-    # Plot 2b: Add the input step signal for reference.
-    fig_filter.add_trace(go.Scatter(
-        x=t_vec, y=input_step,
-        name="Input Step",
-        line=dict(color=c_text, dash='dash', width=1.5),
-        opacity=0.7
-    ), row=1, col=2)
+    # Plot 2b: Input Step Reference
+    fig_filter.add_trace(go.Scatter(x=t_vec, y=input_step, name="Input Step", line=dict(color=c_text, dash='dash', width=1.5), opacity=0.7), row=1, col=2)
 
-    # ------------------------------------------
-    # General Styling for Dark/Light Mode
-    # ------------------------------------------
-    base_axis_style = dict(
-        showgrid=True, gridcolor=c_grid, zerolinecolor=c_grid, tickfont=dict(color=c_text)
-    )
-
+    # --- 5. Professional Styling ---
+    base_axis_style = dict(showgrid=True, gridcolor=c_grid, zerolinecolor=c_grid, tickfont=dict(color=c_text))
     fig_filter.update_layout(
         title=dict(
-            text=f"<b>Fractional Filter Analysis (Oustaloup Method)</b><br><span style='font-size:12px; color:{c_text};'>Verifying that s<sup>{test_order}</sup> behaves as a half-derivative</span>",
-            y=0.92, x=0.05, xanchor='left', yanchor='top'
+            text=f"<b>Analysis of the Fractional Operator s<sup>{test_order}</sup> (Oustaloup Method)</b>",
+            y=0.92, x=0.5, xanchor='center', yanchor='top'
         ),
         height=450,
-        paper_bgcolor='rgba(0,0,0,0)', # Transparent background
-        plot_bgcolor='rgba(0,0,0,0)',  # Transparent plot area
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color=c_text),
         hovermode="x unified",
         margin=dict(t=100, l=80, r=80, b=50),
         legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
-
-        # Bode Plot Axes
+        # Axis styling
         xaxis=dict(type="log", title="Frequency (rad/s)", **base_axis_style),
         yaxis=dict(title="Magnitude (dB)", title_font=dict(color=c_mag), **base_axis_style),
-        yaxis2=dict(
-            title="Phase (Deg)", title_font=dict(color=c_phase),
-            range=[0, 90], showgrid=False, tickfont=dict(color=c_phase)
-        ),
-
-        # Step Response Axes
+        yaxis2=dict(title="Phase (Deg)", title_font=dict(color=c_phase), range=[0, 90], showgrid=False, tickfont=dict(color=c_phase)),
         xaxis2=dict(title="Time (s)", **base_axis_style),
         yaxis3=dict(title="Amplitude", **base_axis_style)
     )
 
-    # Add a horizontal line showing the theoretical target phase for this order.
+    # Add a horizontal line for the theoretical target phase
     theoretical_phase = test_order * 90
     fig_filter.add_hline(
         y=theoretical_phase, line_dash="dot", line_color=c_phase,
-        annotation_text=f"Target: {theoretical_phase}°",
+        annotation_text=f"Theoretical Target: {theoretical_phase}°",
         annotation_font=dict(color=c_phase),
         annotation_position="bottom right",
         row=1, col=1, secondary_y=True
     )
 
-    # --- Render Final Output in Marimo ---
+    # --- 6. Final Output: Explanation and Plot ---
+    # This is the most important part: explaining the "why"
     mo.vstack([
-        mo.md("### 📉 Oustaloup Filter Verification"),
-        mo.md(f"""
-        This analysis validates the behavior of the fractional-order operator, **s<sup>{test_order}</sup>**. A key property of a fractional operator is its constant phase shift across a wide frequency range.
+        mo.md(
+            """
+            ### 📉 Verifying the Core Component: The Fractional Operator
 
-        - The **Bode Plot** confirms this: the phase (red line) holds steady around the theoretical target of **{theoretical_phase}°**.
-        - The **Step Response** visualizes how this unique operator behaves in the time domain when subjected to a sudden input.
-        """),
+            **Why is this analysis here?** Our main controller is a *Fractional Order* PID (FOPID), which uses the non-standard mathematical operators `s^λ` and `s^μ`. Before we can trust our complex controller, we must first prove that our implementation of this core component—the `OustaloupFilter` class—is mathematically correct.
+
+            This cell isolates a single fractional operator, **s<sup>{test_order}</sup>**, and validates its behavior:
+
+            1.  **Bode Plot (Left):** The key property of a fractional operator is its **constant phase shift**. For an order of `{test_order}`, the theoretical phase shift is `{test_order} * 90° = {theoretical_phase}°`. As you can see, the red line holds steady at this target across a wide frequency range, **validating our implementation**.
+        
+            2.  **Step Response (Right):** This plot visualizes the operator's unique behavior in the time domain. It is neither a perfect integrator (which would be a straight ramp) nor a simple derivative, but something in between. This demonstrates the unique "memory" property of fractional calculus.
+            """
+        ),
         mo.ui.plotly(fig_filter)
     ])
     return
@@ -549,7 +521,7 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
         if is_fuzzy_mode:
             flc1_tuner = RealFuzzyController()
             flc2_scaler = FuzzyScalerController()
-    
+
         use_fractional = (strategy_type == OPT_FOPID) or (strategy_type == OPT_GA)
         frac_integrator = OustaloupFilter(-lam) if use_fractional else None
         frac_differentiator = OustaloupFilter(mu) if use_fractional else None
@@ -558,10 +530,10 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
         dt = 0.0001
         steps = int(t_end / dt)
         time = np.linspace(0, t_end, steps)
-    
+
         speed_arr, torque_arr, iq_arr = np.zeros(steps), np.zeros(steps), np.zeros(steps)
         kp_log, ki_log, sf_log = np.zeros(steps), np.zeros(steps), np.zeros(steps)
-    
+
         w_mech, iq_current, error_sum, prev_error = 0.0, 0.0, 0.0, 0.0
 
         # 4. Main Simulation Loop
@@ -583,11 +555,11 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
                 base_kp, base_ki = flc1_tuner.compute_base_gains(error, delta_error)
                 raw_scaling_factor = flc2_scaler.compute_scaling_factor(error, delta_error)
                 current_sf = raw_scaling_factor * fuzzy_master_scale
-            
+
                 final_kp = base_kp * current_sf
                 final_ki = base_ki * current_sf
                 final_kd = kd # Use the optimized Kd during transient
-        
+
             else:
                 # --- STEADY STATE (Low Error) ---
                 if strategy_type == OPT_GA:
@@ -595,13 +567,13 @@ def _(FuzzyScalerController, OPT_FOPID, OPT_GA, RealFuzzyController, np):
                     # Use Fixed Gains and DISABLE Derivative term to stop oscillations
                     final_kp = kp_fixed
                     final_ki = ki_fixed
-                    final_kd = 0.0 # Force Kd to 0 in steady state for smooth response
+                    final_kd = 0 # Force Kd to 0 in steady state for smooth response
                 else:
                     # Standard PID/FOPID behavior
                     final_kp = ctrl_params["Kp"]
                     final_ki = ctrl_params["Ki"]
                     final_kd = ctrl_params["Kd"]
-        
+
             # --- Logging ---
             kp_log[i] = final_kp
             ki_log[i] = final_ki
@@ -1220,10 +1192,16 @@ def _(
     # ==========================================
     mo.vstack([
         mo.ui.plotly(fig_mf),
-        mo.ui.plotly(fig_surf)
+    
     ])
 
     # The cell ends here
+    return (fig_surf,)
+
+
+@app.cell
+def _(fig_surf, mo):
+    mo.ui.plotly(fig_surf)
     return
 
 
@@ -1461,8 +1439,112 @@ def _(
 @app.cell(column=3, hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 🧬 Evolutionary Optimization Engine
+ 
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+
+    flowchart = mo.mermaid("""
+    graph TD
+        %% --- Styling Definitions ---
+        classDef startend fill:#27ae60,stroke:#2c3e50,stroke-width:2px,color:white,font-weight:bold,rx:8,ry:8;
+        classDef process fill:#ecf0f1,stroke:#34495e,stroke-width:2px,color:#2c3e50;
+        classDef decision fill:#f39c12,stroke:#d35400,stroke-width:2px,color:#2c3e50,font-weight:bold;
+        classDef io fill:#3498db,stroke:#2980b9,stroke-width:2px,color:white;
+        classDef loop fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:white,stroke-dasharray: 5 5;
+
+        %% --- Diagram Flow ---
+        A(Start GA Process):::startend
+        B[Initialize Population\nCreate random sets of controller parameters - Chromosomes]:::process
+        C{Loop for Each Generation}:::decision
+
+        subgraph "Evolutionary Cycle"
+            direction TB
+            D[Evaluate Fitness\nRun simulation for each individual\nCalculate ISE cost score]:::io
+            E[Selection\nChoose the best individuals - Parents\nusing Elitism & Tournament]:::loop
+            F[Crossover\nCombine genes from two parents\nto create a new child]:::loop
+            G[Mutation\nIntroduce small, random changes\nto the child's genes]:::loop
+        end
+
+        H{Generations Complete?}:::decision
+        I(End: Output Best Solution\nThe single best chromosome found):::startend
+
+        %% --- Connections ---
+        A --> B
+        B --> C
+        C -- "Start New Generation" --> D
+        D --> E
+        E --> F
+        F --> G
+        G -- "New Population" --> H
+        H -- "No, continue..." --> C
+        H -- "Yes" --> I
+
+    """)
+    main = f"""
+    ## 🧬 Evolutionary Optimization Engine
+    # The Optimization Engine: Genetic Algorithm (GA)
+
+    The core of this project's intelligence lies in its ability to automatically find the optimal tuning parameters for the controller. Manually tuning six interdependent parameters (`Kp`, `Ki`, `Kd`, `λ`, `μ`, `α`) is a nearly impossible task for a human. It's like trying to solve a six-dimensional puzzle.
+
+    This is where the **Genetic Algorithm (GA)** comes in.
+
+    {flowchart}
+
+    ## The Core Idea: Digital Evolution
+
+    Instead of manual trial-and-error, we use a process that mimics Charles Darwin's theory of evolution and "survival of the fittest." We create a large population of potential controllers and let them compete against each other over many generations. Only the best ones survive and "reproduce," leading to progressively better solutions.
+
+    Here’s how this "digital evolution" works, step-by-step:
+
+    ### 1. Initialization: The First Generation
+
+    First, we create an initial **Population**. In our case, a "population" is a group of candidate controllers (e.g., 50 of them).
+    *   Each **Individual** in the population is a complete set of the six controller parameters. This is often called a **Chromosome**.
+    *   Each parameter (`Kp`, `Ki`, etc.) within that set is a **Gene**.
+
+    This first generation is created completely randomly within the search boundaries you define in the "Optimization Console."
+
+    ### 2. Fitness Evaluation: The "Test Drive"
+
+    This is the most critical step. To determine which controllers are "good," we need to test them.
+    *   For every single individual (chromosome) in the population, we run a quick, standardized simulation.
+    *   We then calculate its performance using a **Cost Function**. In this project, we use the **Integral of Squared Error (ISE)**.
+        *   `ISE = ∫ e² dt`
+    *   A lower ISE score means the controller tracked the target speed more accurately. This score is the individual's **Fitness**. A lower score means higher fitness (better performance).
+
+    ### 3. Selection: Choosing the "Parents"
+
+    Now that every controller has a fitness score, we decide who gets to "reproduce." We use two main strategies:
+    *   **Elitism:** The single best individual from the current generation is automatically guaranteed to pass on to the next generation, untouched. This ensures we never lose our best solution.
+    *   **Tournament Selection:** We randomly pick a few individuals (e.g., 3) from the population and make them "compete." The one with the best fitness score (lowest error) wins and is selected as a "parent" for the next generation. We repeat this process until we have enough parents.
+
+    ### 4. Crossover: Creating "Children"
+
+    This step mimics biological reproduction. We take two "parent" controllers that were chosen during Selection and combine their "genes" to create a new "child" controller.
+
+    For example, a new `Kp` value for the child might be a blend of the `Kp` values from its two parents. This allows the new generation to inherit the successful traits of the previous one.
+
+    ### 5. Mutation: Introducing New Ideas
+
+    To avoid getting stuck with similar solutions, we introduce random changes. With a small probability (the **Mutation Rate**), we might randomly tweak one of the "genes" of a new child. For instance, we might slightly increase its `Kd` value.
+
+    This step is crucial for exploring new, potentially better solutions that couldn't be created through crossover alone.
+
+    ### 6. Repeat!
+
+    The new generation of "children" (created from Crossover and Mutation) now becomes the current population. We then repeat the entire process—**Fitness Evaluation, Selection, Crossover, Mutation**—for the number of generations you specified.
+
+    By the end of this process, the algorithm returns the "super-survivor": the single best set of parameters found across all generations. This is the solution that consistently produced the lowest error and represents the optimized controller.
+
+    """
+    main=mo.md(main)
+    main
+
+    # The cell ends here
     return
 
 
@@ -1581,75 +1663,6 @@ def _(OPT_GA, np, simulate_pmsm_system):
 
             return best_solution, best_fitness, convergence_history, full_trial_history
     return (GeneticOptimizerEngine,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    # The cell starts here
-
-    flowchart = mo.mermaid("""
-    graph TD
-        %% --- Styling Definitions ---
-        classDef startend fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:white,rx:10,ry:10;
-        classDef proc fill:#ecf0f1,stroke:#34495e,stroke-width:2px,color:#2c3e50;
-        classDef decision fill:#f1c40f,stroke:#f39c12,stroke-width:2px,color:#d35400,rx:5,ry:5;
-        classDef sim fill:#3498db,stroke:#2980b9,stroke-width:2px,color:white;
-        classDef loop fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,stroke-dasharray: 5 5,color:white;
-        classDef note fill:#fef9e7,stroke:#f39c12,stroke-width:1px,color:#b06a00;
-
-
-        %% --- Nodes ---
-        Start([Start Optimization]):::startend
-
-        Init[Initialize Population<br/>Generate random candidate solutions for:<br/><b>[Kp, Ki, Kd, λ, µ, Fuzzy_Scale]</b>]:::proc
-
-        subgraph "Fitness Evaluation Loop (for each candidate)"
-            direction LR
-            Sim[Run PMSM Simulation<br/>(Using the full Switched AFFOPID-FOPID model)]:::sim
-            -->
-            Calc[Calculate Fitness Cost<br/>Cost = ISE = ∫ e²(t) dt]:::sim
-        end
-
-        Check{All Generations<br/>Completed?}:::decision
-
-        subgraph "Evolution: Create New Generation"
-            direction TB
-            Sel[Selection<br/>(Elitism + Tournament)]:::loop
-            -->
-            Cross[Crossover<br/>(Arithmetic Combination)]:::loop
-            -->
-            Mut[Mutation<br/>(Random Perturbation)]:::loop
-        end
-
-        Stop([Output Optimal Parameters]):::startend
-
-        Note[Note: The GA optimizes the 6 controller parameters.<br/>The Switch Threshold and Fixed Gains<br/>are treated as fixed conditions during the simulation.]:::note
-
-
-        %% --- Connections ---
-        Start --> Init
-        Init --> Sim
-        Calc --> Check
-
-        Check -- No --> Sel
-        Sel --> Cross
-        Cross --> Mut
-        Mut -- New Population --> Sim
-
-        Check -- Yes --> Stop
-
-        Sim -.-> Note
-
-    """)
-
-    mo.vstack([
-        mo.md("### 🔄 Optimization Process Flowchart"),
-        mo.md("*This diagram illustrates the step-by-step logic executed by the `GeneticOptimizerEngine`.*"),
-        flowchart
-    ])
-
-    # The cell ends here
-    return
 
 
 @app.cell(hide_code=True)
@@ -1799,7 +1812,7 @@ def _(
 
     if is_new_click:
         # --- This block runs ONLY when the "Start" button is clicked ---
-    
+
         # 1. Prepare and Run the GA
         user_defined_bounds = [
             tuple(bounds_ui_elements["Kp"].value), tuple(bounds_ui_elements["Ki"].value),
@@ -1822,13 +1835,13 @@ def _(
                 mutation_rate=ga_controls.value["mut"],
                 crossover_rate=ga_controls.value.get("cross", 0.7)
             )
-    
+
         # 2. Store ALL results in state variables for other cells to use.
         set_ga_full_history(full_history)
         set_ga_best_genes(best_genes)
         set_ga_final_cost(final_cost)
         set_ga_convergence(history_scores)
-    
+
         # 3. Prepare a simple confirmation message as the output for this cell
         if best_genes:
             new_view = mo.md(f"**✅ Evolution Complete!** Best cost found: `{final_cost:.6f}`. Results are now available for analysis in the cells below.")
@@ -1852,51 +1865,89 @@ def _(
 
 
 @app.cell
-def _(mo):
-    # Cell 1: Filter Slider (No changes needed)
-    ga_result_filter_slider = mo.ui.range_slider(
-        0, 100, value=[0, 75], step=1,full_width=True,
-        label="Filter Results by Cost (Show best %):"
-    )
+def _(get_ga_full_history, mo):
+    # Cell 1: Data Preparation and Filter UI
 
-    return (ga_result_filter_slider,)
+    # Check if the GA has been run yet.
+    if 'get_ga_full_history' not in globals() or not get_ga_full_history():
+        # Display a placeholder if no data is available.
+        ga_data_status = mo.md("⏳ *Run the Genetic Algorithm to generate results for analysis.*")
+        # Define placeholder variables to prevent errors in downstream cells.
+        history_df = None
+        ga_result_filter_slider = None
+    else:
+        # If data exists, prepare it and create the UI.
+        import pandas as pd
+    
+        # Create the main DataFrame from the full history and sort it by performance.
+        history_df = pd.DataFrame(get_ga_full_history()).sort_values(by='Cost').reset_index(drop=True)
+
+        # Create the interactive slider for filtering results.
+        ga_result_filter_slider = mo.ui.range_slider(
+            0, 100, value=[0, 20], step=1,orientation="vertical",
+            label="Filter Top Performers (%):"
+        )
+
+        # Display the slider and a title.
+        ga_data_status = mo.vstack([
+            mo.md("### 🔬 Interactive Analysis of GA Trials"),
+            mo.md("Use the slider below to focus on a specific percentile of the best-performing solutions found by the algorithm. The plots below will update reactively."),
+            ga_result_filter_slider
+        ])
+
+    # This cell's output is the UI. The dataframes are passed to other cells.
+    ga_data_status
+    return ga_result_filter_slider, history_df
 
 
 @app.cell
-def _(
-    ga_result_filter_slider,
-    get_ga_best_genes,
-    get_ga_convergence,
-    get_ga_full_history,
-    go,
-    mo,
-):
-    # The cell starts here - VISUALIZATION CELL
+def _(ga_result_filter_slider, history_df):
+    # Cell 2: Filtering Logic (No Visual Output)
+    # This cell simply takes the full dataframe and the slider value,
+    # and returns the filtered dataframe for other cells to use.
 
-    # This cell is for VISUALIZATION. It depends on the filter slider and the results stored in the state.
-    # It will re-run reactively whenever the slider's value changes.
-
-    # 1. Retrieve all necessary data from the global state
-    full_history_data = get_ga_full_history()
-    best_genes_data = get_ga_best_genes()
-    history_scores_data = get_ga_convergence()
-
-    # 2. Main display logic: Check if data from the GA is available
-    if full_history_data and best_genes_data and history_scores_data:
-        # --- This block runs if GA results are available ---
-    
-        # a. Prepare and Filter Data using the slider
-        import pandas as pd
-        history_df = pd.DataFrame(full_history_data).sort_values(by='Cost').reset_index(drop=True)
+    if history_df is not None and ga_result_filter_slider is not None:
         min_percent, max_percent = ga_result_filter_slider.value
         start_idx = int(len(history_df) * (min_percent / 100.0))
-        # Make sure end_idx is at least start_idx
-        end_idx = max(start_idx, int(len(history_df) * (max_percent / 100.0)))
-        if start_idx == end_idx and start_idx < len(history_df): # Ensure slice is not empty if possible
-            end_idx += 1
+        # Ensure end_idx is at least start_idx + 1 to avoid empty slices
+        end_idx = max(start_idx + 1, int(len(history_df) * (max_percent / 100.0)))
+    
         filtered_df = history_df.iloc[start_idx:end_idx]
+    else:
+        filtered_df = None
+    return (filtered_df,)
 
-        # b. Create Static Summary View (Table + Convergence Curve)
+
+@app.cell(hide_code=True)
+def _(filtered_df, go, history_df, mo):
+    # Cell 4: Parallel Coordinates Plot (Reactive)
+
+    if filtered_df is not None and not filtered_df.empty:
+        lll=fig_par = go.Figure(data=go.Parcoords(
+            line=dict(color=filtered_df['Cost'], colorscale='Turbo_r', showscale=True),
+            dimensions=[{'label': col, 'values': filtered_df[col]} for col in filtered_df.columns]
+        ))
+        fig_par.update_layout(title="<b>Parallel Coordinates of Filtered Solutions</b>", height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        mo.ui.plotly(fig_par)
+    elif 'history_df' in globals() and history_df is not None:
+        lll=mo.md("ℹ️ *No data in the selected filter range. Adjust the slider above.*")
+    lll
+    return (lll,)
+
+
+@app.cell
+def _(get_ga_best_genes, get_ga_convergence, go, mo):
+    # Cell 3: Static Summary - Best Solution & Convergence Curve
+
+    # Define the output variable at the start to ensure it always exists.
+    summary_output = None
+
+    # Check if the necessary data from the GA run is available.
+    if 'get_ga_best_genes' in globals() and get_ga_best_genes():
+        best_genes_data = get_ga_best_genes()
+        history_scores_data = get_ga_convergence()
+
+        # Markdown table for the best parameters found (no changes needed here).
         results_table = f"""
         | Parameter | Symbol | Best Value |
         | :--- | :---: | :---: |
@@ -1907,59 +1958,141 @@ def _(
         | Diff. Order | $\mu$ | **{best_genes_data[4]:.4f}** |
         | Fuzzy Scale | $\\alpha$ | **{best_genes_data[5]:.4f}** |
         """
-        fig_conv = go.Figure(data=go.Scatter(
-            x=list(range(1, len(history_scores_data) + 1)), y=history_scores_data,
-            mode='lines+markers', line=dict(color='#2ecc71', width=3)
-        ))
-        fig_conv.update_layout(title="<b>Overall Convergence History</b>", height=350, template="plotly_white")
+
+        # --- ENHANCEMENTS APPLIED HERE ---
     
-        summary_view = mo.vstack([
+        # 1. Create the Plotly figure for the convergence history.
+        fig_conv = go.Figure(data=go.Scatter(
+            x=list(range(1, len(history_scores_data) + 1)), 
+            y=history_scores_data,
+            mode='lines+markers',
+            line=dict(color='#00d2ff', width=3), # A vibrant cyan color for the line
+            marker=dict(color='#00d2ff', size=6),
+            fill='tozeroy', # Add a fill under the line for better visuals
+            fillcolor='rgba(0, 210, 255, 0.1)' # A subtle, semi-transparent fill
+        ))
+
+        # 2. Update the layout for theme compatibility and better aesthetics.
+        fig_conv.update_layout(
+            title="<b>Overall Convergence History</b>",
+            height=350,
+            # --- Theme Adjustments ---
+            paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
+            plot_bgcolor='rgba(0,0,0,0)',   # Transparent plot area
+            font=dict(color="#aaa"),        # Neutral gray font color for text
+            xaxis_title="Generation",
+            yaxis_title="Best Cost (ISE)",
+            # Style the grid lines to be subtle and theme-friendly
+            xaxis=dict(gridcolor='rgba(170, 170, 170, 0.2)'),
+            yaxis=dict(gridcolor='rgba(170, 170, 170, 0.2)')
+        )
+
+        # 3. Assemble the final view.
+        summary_output = mo.vstack([
             mo.md("### 🏆 Best Solution & Convergence"),
             mo.hstack([mo.md(results_table), mo.ui.plotly(fig_conv)], align="center"),
-            mo.md("---")
         ])
 
-        # c. Create Filtered Visualizations
-        if not filtered_df.empty:
-            # Parallel Coordinates Plot
-            fig_par = go.Figure(data=go.Parcoords(
-                line=dict(color=filtered_df['Cost'], colorscale='Turbo_r', showscale=True),
-                dimensions=[{'label': col, 'values': filtered_df[col]} for col in filtered_df.columns]
-            ))
-            fig_par.update_layout(title="<b>Parallel Coordinates (Filtered)</b>", height=500)
+    # This line will display the final output object.
+    summary_output
+    return
 
-            # 3D Scatter Plot
-            fig_3d = go.Figure(data=go.Scatter3d(
-                x=filtered_df['Kp'], y=filtered_df['Ki'], z=filtered_df['Cost'], mode='markers',
-                marker=dict(size=4, color=filtered_df['Cost'], colorscale='Viridis_r')
-            ))
-            fig_3d.update_layout(title="<b>3D Landscape (Filtered)</b>", height=500)
-        
-            # Detailed History Table
-            history_table = mo.ui.table(filtered_df.round(4).to_dict('records'), pagination=True, page_size=10, label="Filtered Trials Log")
 
-            # Assemble the interactive/filtered part of the view
-            analysis_view = mo.vstack([
-                mo.ui.plotly(fig_par),
-                mo.accordion({
-                    "View 3D Landscape (Filtered)": mo.ui.plotly(fig_3d),
-                    "View Detailed Log (Filtered)": history_table
-                })
-            ])
-        else:
-            analysis_view = mo.md("ℹ️ *No data in the selected filter range. Adjust the slider.*")
+@app.cell
+def _(filtered_df, go, mo):
+    # Cell 5: 3D Landscape Plot (Reactive and Enhanced Visualization)
 
-        # d. Render the complete view for this cell
-        l_l=mo.vstack([ga_result_filter_slider,
-            summary_view,
-            analysis_view
-        ])
+    # Define the output variable at the start to ensure it always exists.
+    plot_3d_output = None
 
-    else:
-        # This message is shown before the GA has been run for the first time
-        l_l=mo.md("⏳ *Run the Genetic Algorithm to generate results for analysis.*")
+    # Check if the filtered data from the upstream cell is available and not empty.
+    if filtered_df is not None and not filtered_df.empty:
+    
+        # --- Step 1: Identify the "Winner" ---
+        # Find the index of the solution with the lowest cost in the filtered data.
+        winner_idx = filtered_df['Cost'].idxmin()
+        winner_solution = filtered_df.loc[winner_idx]
 
-    l_l
+        # --- Step 2: Create a Figure with Two Layers ---
+        # We will use two separate 'traces' to style the winner differently.
+        fig_3d = go.Figure()
+
+        # Trace 1: All the other data points (the "trials")
+        fig_3d.add_trace(go.Scatter3d(
+            x=filtered_df['Kp'], 
+            y=filtered_df['Ki'], 
+            z=filtered_df['Cost'], 
+            mode='markers',
+            marker=dict(
+                size=5,  # Slightly larger points
+                color=filtered_df['Cost'], 
+                colorscale='Viridis_r', # "_r" reverses the scale (purple = good)
+                showscale=True,
+                colorbar=dict(title='Cost (ISE)'), # Add a title to the color bar
+                opacity=0.7 # Use opacity to see dense clusters
+            ),
+            name='GA Trials' # Label for the legend
+        ))
+
+        # Trace 2: The single "Winner" point
+        fig_3d.add_trace(go.Scatter3d(
+            x=[winner_solution['Kp']], # Must be in a list
+            y=[winner_solution['Ki']],
+            z=[winner_solution['Cost']],
+            mode='markers',
+            marker=dict(
+                size=12,             # Much larger to stand out
+                color='#FFD777',     # A distinct, bright gold color
+                symbol='diamond',    # A unique symbol for the winner
+                line=dict(width=1.5, color='black') # A black border for contrast
+            ),
+            name='Best Solution' # Label for the legend
+        ))
+    
+        # --- Step 3: Apply Professional Layout and Styling ---
+        fig_3d.update_layout(
+            title="<b>3D Optimization Landscape with Best Solution Highlighted</b>", 
+            height=600, # A bit taller for a better 3D perspective
+            width=None, # Let the plot expand to the full width of the cell
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)', # Makes the plot background transparent
+            font=dict(family="Segoe UI, system-ui, sans-serif", color="#aaa"), # Clean, neutral font
+            legend=dict(yanchor="top", y=0.9, xanchor="left", x=0.1), # Position the legend neatly
+            margin=dict(l=0, r=0, b=0, t=40), # Adjust margins for a tight fit
+            scene=dict(
+                xaxis_title='Proportional Gain (Kp)', # More descriptive titles
+                yaxis_title='Integral Gain (Ki)',
+                zaxis_title='Cost (ISE)',
+                # Style the 3D axes for better visibility in dark/light modes
+                xaxis=dict(gridcolor='rgba(255, 255, 255, 0.1)'),
+                yaxis=dict(gridcolor='rgba(255, 255, 255, 0.1)'),
+                zaxis=dict(gridcolor='rgba(255, 255, 255, 0.1)')
+            )
+        )
+    
+        # The final output for this cell is the Plotly figure.
+        plot_3d_output = mo.ui.plotly(fig_3d)
+
+    # This final line will display either the plot or None (if no data),
+    # preventing any errors.
+    plot_3d_output
+    return
+
+
+@app.cell
+def _(filtered_df, lll, mo):
+    # Cell 6: Detailed Log Table (Reactive)
+    just_table=lll
+    if filtered_df is not None and not filtered_df.empty:
+        # Use an accordion to keep the UI clean
+        just_table=mo.accordion({
+            "View Detailed Log of Filtered Solutions": mo.ui.table(
+                filtered_df.round(4).to_dict('records'), 
+                pagination=True, 
+                page_size=10
+            )
+        })
+    just_table
     return
 
 
