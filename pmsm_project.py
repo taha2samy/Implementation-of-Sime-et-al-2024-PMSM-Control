@@ -1909,7 +1909,7 @@ def _(get_ga_full_history, mo):
 
         # Create the interactive slider for filtering results.
         ga_result_filter_slider = mo.ui.range_slider(
-            0, 100, value=[0, 20], step=1,orientation="vertical",
+            0, 100, value=[0, 80], step=1,full_width=True,
             label="Filter Top Performers (%):"
         )
 
@@ -2014,12 +2014,22 @@ def _(get_ga_best_genes, get_ga_convergence, go, mo):
 
         # 3. Assemble the final view.
         summary_output = mo.vstack([
-            mo.md("### 🏆 Best Solution & Convergence"),
-            mo.hstack([mo.md(results_table), mo.ui.plotly(fig_conv)], align="center"),
+            mo.vstack([mo.ui.plotly(fig_conv)], align="center"),
         ])
 
     # This line will display the final output object.
     summary_output
+    return results_table, summary_output
+
+
+@app.cell
+def _(lll, mo, results_table, summary_output):
+    just_table_to_show=lll
+    if summary_output!=None:
+
+
+        just_table_to_show=mo.vstack([mo.md("### 🏆 Best Solution & Convergence"),mo.md(results_table)])
+    just_table_to_show
     return
 
 
@@ -2105,19 +2115,33 @@ def _(filtered_df, go, mo):
 
 
 @app.cell
-def _(filtered_df, lll, mo):
-    # Cell 6: Detailed Log Table (Reactive)
-    just_table=lll
+def _(filtered_df, mo):
+    # Cell 6: Detailed Log Table (Reactive and Directly Visible)
+
+    # Define the output variable at the start to ensure it always exists.
+    table_output = None
+
+    # Check if the filtered data from the upstream cell is available and not empty.
     if filtered_df is not None and not filtered_df.empty:
-        # Use an accordion to keep the UI clean
-        just_table=mo.accordion({
-            "View Detailed Log of Filtered Solutions": mo.ui.table(
-                filtered_df.round(4).to_dict('records'), 
-                pagination=True, 
-                page_size=10
-            )
-        })
-    just_table
+    
+        # 1. Create a clear title for the table using Marimo's markdown.
+        table_title = mo.md("### Detailed Log of Filtered Solutions")
+    
+        # 2. Create the interactive table object directly.
+        # The 'label' parameter provides helpful context for the table.
+        detailed_table = mo.ui.table(
+            data=filtered_df.round(4).to_dict('records'), 
+            pagination=True, 
+            page_size=14,
+            label="A log of all trials within the selected performance percentile."
+        )
+    
+        # 3. Combine the title and the table into a single vertical stack for a clean layout.
+        table_output = mo.vstack([table_title, detailed_table])
+
+    # This final line displays the output.
+    # It will show the title and table if data exists, or nothing if there's no data.
+    table_output
     return
 
 
