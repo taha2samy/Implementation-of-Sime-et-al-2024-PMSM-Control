@@ -928,15 +928,40 @@ def _(iq_data, mo, motor_ui, np, t_data, te_data, vehicle_ui, w_data):
 
 @app.cell(column=2, hide_code=True)
 def _(mo):
-    mo.md(r"""
+    mo.md("""
     ## 🧩 Fuzzy Logic: Visualized
 
     Understanding the non-linear behavior of a fuzzy controller is best done visually.
-    This panel breaks down the controller's decision-making process into its fundamental visual components:
+    This panel breaks down the controller's decision-making process into its fundamental components, showing how it translates numerical data into intelligent, human-like actions.
 
-    - **Membership Functions:** How the controller categorizes inputs.
-    - **Control Surface:** The complete map of all possible decisions.
-    - **Rule Matrix:** The core logic table that drives the system.
+    ---
+
+    ### The Inputs: System State (`e` and `de/dt`)
+
+    The fuzzy controller constantly monitors two critical pieces of information about the system's performance:
+
+    1.  **Error (`e`)**: This is the difference between the target speed and the current speed (`e = ω* - ω`). It answers the question: *"How far are we from our goal right now?"* A large positive error means the motor is too slow; a large negative error means it's too fast.
+
+    2.  **Change in Error (`de/dt`)**: This is the rate at which the error is changing. It answers the question: *"Are we getting better or worse, and how quickly?"* A positive `de/dt` means the error is growing (getting worse), while a negative `de/dt` means the error is shrinking (getting better).
+
+    ### The Visualization Components:
+
+    *   **Membership Functions:** This plot shows how the controller "fuzzifies" the crisp numerical values of `e` and `de/dt` into linguistic, understandable terms like "Negative Big" (NB), "Zero" (Z), or "Positive Small" (PS). It allows a single input value to belong to multiple categories with varying degrees of membership.
+
+    *   **Rule Matrix (Heatmap):** This is the "brain" of the controller. It's a simple lookup table containing rules written by an expert, such as: **IF** the `Error` is "Positive Big" **AND** the `Change in Error` is "Zero," **THEN** the output action should be "Very Big" (VB). The heatmap visualizes this entire set of rules.
+
+    *   **Control Surface (3D Plot):** This is the complete decision map. It shows the final output for every possible combination of `e` and `de/dt`. The smooth, curved surface highlights the controller's non-linear nature, allowing for nuanced responses that a traditional linear controller cannot achieve.
+
+    ### The Output: Adaptive Gain Multiplier (`α`)
+
+    After processing the inputs through the rules, the controller produces a single, crisp numerical output:
+
+    *   **Adaptive Gain (`α`)**: This is a multiplier that dynamically scales the gains (`Kp`, `Ki`, `Kd`) of the main FOPID controller.
+        *   If `α > 1.0`, the controller becomes more aggressive to quickly correct a large error.
+        *   If `α < 1.0`, the controller becomes gentler to avoid overshoot when near the target.
+        *   If `α = 1.0`, the controller behaves like a standard, non-adaptive FOPID.
+
+    This adaptive gain is what allows the system to be both aggressive when needed and stable when it matters most.
     """)
     return
 
