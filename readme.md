@@ -17,7 +17,6 @@ This project is a practical, hands-on implementation and visualization of the co
 
 ## 📸 Dashboard Demo
 
-*(This is an ideal place to add a GIF or a high-quality screenshot of your dashboard)*
 
 ![Dashboard Screenshot](./image.png)
 
